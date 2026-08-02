@@ -7,6 +7,3 @@ dist/
 .idea/
 .vs/
 *.user
-
-# Referenz-Datenblätter (groß, nicht Teil des Quellcodes)
-*.pdf
