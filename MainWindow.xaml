@@ -1,0 +1,377 @@
+<Window x:Class="VolvoSplitter.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="clr-namespace:VolvoSplitter.Controls"
+        Title="Volvo File Splitter" Height="760" Width="1080"
+        MinHeight="560" MinWidth="880"
+        Background="{StaticResource InkBrush}"
+        TextOptions.TextRenderingMode="ClearType"
+        UseLayoutRounding="True"
+        AllowDrop="True"
+        Drop="OnDrop" DragOver="OnDragOver" DragLeave="OnDragLeave"
+        PreviewKeyDown="OnPreviewKeyDown">
+
+    <Grid>
+        <!-- ==============================================================
+             Leerzustand: die Anwendung erklärt sich über das, was sie tut
+             ============================================================== -->
+        <Grid x:Name="EmptyState">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="520">
+                <TextBlock Style="{StaticResource Eyebrow}" Text="TRW EMS2.3  ·  EMS2.4"
+                           HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                <TextBlock Style="{StaticResource Display}" Text="Volvo File Splitter"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Style="{StaticResource BodyMuted}" HorizontalAlignment="Center"
+                           Margin="0,10,0,32" TextAlignment="Center"
+                           Text="Zerlegt Flash-Abbilder der Motorsteuerung in ihre Sektoren, prüft die Prüfsummen und schreibt geänderte Datensätze zurück."
+                           TextWrapping="Wrap"/>
+
+                <Border x:Name="DropZone" Height="150" CornerRadius="12"
+                        Background="{StaticResource PanelBrush}"
+                        BorderBrush="{StaticResource LineBrush}" BorderThickness="1">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <TextBlock x:Name="DropHint" Style="{StaticResource Body}"
+                                   Text="MPC-Dump hierher ziehen"
+                                   HorizontalAlignment="Center" Margin="0,0,0,14"/>
+                        <Button Content="Datei auswählen" Style="{StaticResource PrimaryButton}"
+                                HorizontalAlignment="Center" Click="OnOpenClick"/>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Style="{StaticResource MonoSmall}" HorizontalAlignment="Center"
+                           Margin="0,14,0,0" Text=".MPC   ·   .BIN   ·   Rohabbild des Flash"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- ==============================================================
+             Geladener Dump
+             ============================================================== -->
+        <Grid x:Name="LoadedState" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Kopfzeile: welche Datei liegt vor -->
+            <Border Grid.Row="0" Padding="28,20,28,18"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="FileNameText" Style="{StaticResource MonoLarge}"/>
+                            <Border x:Name="ModifiedBadge" Style="{StaticResource Badge}"
+                                    Margin="12,0,0,0" Visibility="Collapsed"
+                                    Background="#3A2C12" BorderBrush="{StaticResource WarnBrush}">
+                                <TextBlock Style="{StaticResource MonoSmall}" Text="geändert"
+                                           Foreground="{StaticResource WarnBrush}"/>
+                            </Border>
+                        </StackPanel>
+                        <TextBlock x:Name="FileMetaText" Style="{StaticResource MonoSmall}" Margin="0,5,0,0"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="SaveDumpButton" Content="Dump speichern…"
+                                Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                                Visibility="Collapsed" Click="OnSaveDumpClick"/>
+                        <Button Content="Ordner öffnen" Style="{StaticResource GhostButton}"
+                                Margin="0,0,8,0" Click="OnOpenFolderClick"/>
+                        <Button Content="Bericht kopieren" Style="{StaticResource GhostButton}"
+                                Margin="0,0,8,0" Click="OnCopyReportClick"/>
+                        <Button Content="Bericht speichern…" Style="{StaticResource GhostButton}"
+                                Margin="0,0,8,0" Click="OnSaveReportClick"/>
+                        <Button Content="Andere Datei" Style="{StaticResource GhostButton}"
+                                Click="OnOpenClick"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Karte des Adressraums + Inhalt -->
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="104"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <c:FlashMap x:Name="Map" Grid.Column="0" Margin="0,20,0,20"/>
+
+                <ScrollViewer Grid.Column="1" Style="{StaticResource CardScroller}"
+                              Padding="8,18,20,18">
+                    <StackPanel>
+                        <!-- Fahrzeug und Steuergerät -->
+                        <Border x:Name="IdentityPanel" Margin="0,0,0,18" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource Eyebrow}" Text="FAHRZEUG"/>
+                                <TextBlock x:Name="VinText" Style="{StaticResource MonoLarge}"
+                                           Margin="0,4,0,0"/>
+                                <TextBlock x:Name="VehicleMetaText" Style="{StaticResource BodyMuted}"
+                                           Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="EcuMetaText" Style="{StaticResource BodyMuted}"
+                                           Margin="0,3,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Style="{StaticResource Eyebrow}" Text="SEKTOREN" Margin="0,0,0,10"/>
+
+                        <ItemsControl x:Name="SectorList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border x:Name="CardRoot" Style="{StaticResource Card}"
+                                            MouseEnter="OnCardEnter" MouseLeave="OnCardLeave">
+                                        <StackPanel>
+                                            <!-- Kopfzeile der Karte -->
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Style="{StaticResource Eyebrow}"
+                                                           Text="{Binding Label}"/>
+                                                <Border x:Name="StatusBadge" Grid.Column="1"
+                                                        Style="{StaticResource Badge}"
+                                                        Background="#12303F"
+                                                        BorderBrush="{StaticResource SignalBrush}">
+                                                    <TextBlock x:Name="StatusText"
+                                                               Style="{StaticResource MonoSmall}"
+                                                               Text="Prüfsumme stimmt"
+                                                               Foreground="{StaticResource SignalBrush}"/>
+                                                </Border>
+                                            </Grid>
+
+                                            <TextBlock x:Name="PartNumberText"
+                                                       Style="{StaticResource MonoLarge}"
+                                                       Text="{Binding PartNumber}" Margin="0,6,0,0"/>
+
+                                            <TextBlock x:Name="AddressText" Style="{StaticResource MonoSmall}"
+                                                       Margin="0,6,0,0">
+                                                <Run Text="{Binding AddressRange, Mode=OneWay}"/>
+                                                <Run Text="  ·  "/>
+                                                <Run Text="{Binding SizeText, Mode=OneWay}"/>
+                                                <Run Text="   CPU "/>
+                                                <Run Text="{Binding CpuAddressRange, Mode=OneWay}"/>
+                                            </TextBlock>
+
+                                            <TextBlock x:Name="RelocationText" Style="{StaticResource MonoSmall}"
+                                                       Margin="0,6,0,0" TextWrapping="Wrap"
+                                                       Foreground="{StaticResource WarnBrush}"
+                                                       Text="{Binding RelocationNote}"/>
+
+                                            <TextBlock x:Name="ProjectText" Style="{StaticResource BodyMuted}"
+                                                       Margin="0,4,0,0" FontSize="12">
+                                                <Run Text="{Binding Project, Mode=OneWay}"/>
+                                                <Run Text=" · "/>
+                                                <Run Text="{Binding DataSetTag, Mode=OneWay}"/>
+                                                <Run Text=" · "/>
+                                                <Run Text="{Binding BuildDate, Mode=OneWay}"/>
+                                            </TextBlock>
+
+                                            <!-- Hinweiszeile: Prüfsumme, Kürzung, fehlender Sektor -->
+                                            <TextBlock x:Name="AlertText" Style="{StaticResource MonoSmall}"
+                                                       Margin="0,10,0,0" TextWrapping="Wrap"
+                                                       Visibility="Collapsed"
+                                                       Foreground="{StaticResource WarnBrush}"/>
+
+                                            <TextBlock x:Name="CopiesText" Style="{StaticResource MonoSmall}"
+                                                       Margin="0,8,0,0" TextWrapping="Wrap"
+                                                       Text="{Binding ChecksumCopyNote}"/>
+
+                                            <TextBlock x:Name="NoteText" Style="{StaticResource MonoSmall}"
+                                                       Margin="0,8,0,0" TextWrapping="Wrap"
+                                                       Foreground="{StaticResource SignalBrush}"
+                                                       Text="{Binding Note}"/>
+
+                                            <!-- Aktionen -->
+                                            <StackPanel x:Name="Actions" Orientation="Horizontal" Margin="0,14,0,0">
+                                                <Button Content="Extrahieren" Style="{StaticResource CardAction}"
+                                                        Click="OnExtractSectorClick"/>
+                                                <Button Content="Als S-Record" Style="{StaticResource CardAction}"
+                                                        Click="OnExportSRecordClick"/>
+                                                <Button x:Name="RepairButton" Content="Prüfsumme korrigieren"
+                                                        Style="{StaticResource CardAction}"
+                                                        Visibility="Collapsed"
+                                                        Click="OnRepairCrcClick"/>
+                                                <Button Content="Ersetzen…" Style="{StaticResource CardAction}"
+                                                        Click="OnReplaceSectorClick"/>
+                                                <Button Content="Kopfdaten" Style="{StaticResource CardAction}"
+                                                        Click="OnShowHeaderClick"/>
+                                            </StackPanel>
+
+                                            <!-- Ausklappbare Rohfelder des Sektorkopfs -->
+                                            <Border x:Name="HeaderDetails" Visibility="Collapsed"
+                                                    Margin="0,14,0,0" Padding="14,12"
+                                                    CornerRadius="6"
+                                                    Background="{StaticResource InkBrush}"
+                                                    BorderBrush="{StaticResource LineBrush}"
+                                                    BorderThickness="1">
+                                                <ItemsControl ItemsSource="{Binding HeaderFields}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="0,0,0,3">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="28"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Grid.Column="0"
+                                                                           Style="{StaticResource MonoSmall}"
+                                                                           Text="{Binding Key}"
+                                                                           Foreground="{StaticResource SignalBrush}"/>
+                                                                <TextBlock Grid.Column="1"
+                                                                           Style="{StaticResource MonoSmall}"
+                                                                           Text="{Binding Value}"
+                                                                           Foreground="{StaticResource TextBrush}"
+                                                                           TextWrapping="Wrap"/>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <DataTemplate.Triggers>
+                                        <!-- Prüfsumme weicht ab: der Sektor bleibt nutzbar -->
+                                        <DataTrigger Binding="{Binding Status}" Value="CrcMismatch">
+                                            <Setter TargetName="StatusBadge" Property="Background" Value="#3A2C12"/>
+                                            <Setter TargetName="StatusBadge" Property="BorderBrush"
+                                                    Value="{StaticResource WarnBrush}"/>
+                                            <Setter TargetName="StatusText" Property="Text" Value="Prüfsumme weicht ab"/>
+                                            <Setter TargetName="StatusText" Property="Foreground"
+                                                    Value="{StaticResource WarnBrush}"/>
+                                            <Setter TargetName="RepairButton" Property="Visibility" Value="Visible"/>
+                                            <Setter TargetName="AlertText" Property="Visibility" Value="Visible"/>
+                                            <Setter TargetName="AlertText" Property="Text"
+                                                    Value="{Binding CrcAlert, Mode=OneWay}"/>
+                                            <Setter TargetName="CopiesText" Property="Foreground"
+                                                    Value="{StaticResource WarnBrush}"/>
+                                        </DataTrigger>
+
+                                        <!-- Kein Sektor an dieser Adresse -->
+                                        <DataTrigger Binding="{Binding Status}" Value="Missing">
+                                            <Setter TargetName="StatusBadge" Property="Background" Value="Transparent"/>
+                                            <Setter TargetName="StatusBadge" Property="BorderBrush"
+                                                    Value="{StaticResource LineBrush}"/>
+                                            <Setter TargetName="StatusText" Property="Text" Value="nicht gefunden"/>
+                                            <Setter TargetName="StatusText" Property="Foreground"
+                                                    Value="{StaticResource MutedBrush}"/>
+                                            <Setter TargetName="PartNumberText" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="AddressText" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="ProjectText" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="RelocationText" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="CopiesText" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="Actions" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="CardRoot" Property="BorderThickness" Value="0"/>
+                                            <Setter TargetName="CardRoot" Property="Padding" Value="0,2,0,12"/>
+                                            <Setter TargetName="AlertText" Property="Visibility" Value="Visible"/>
+                                            <Setter TargetName="AlertText" Property="Foreground"
+                                                    Value="{StaticResource MutedBrush}"/>
+                                            <Setter TargetName="AlertText" Property="Text"
+                                                    Value="{Binding MissingReason, Mode=OneWay}"/>
+                                            <Setter TargetName="CardRoot" Property="Background" Value="Transparent"/>
+                                        </DataTrigger>
+
+                                        <DataTrigger Binding="{Binding HasChecksumCopies}" Value="False">
+                                            <Setter TargetName="CopiesText" Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+
+                                        <DataTrigger Binding="{Binding Relocated}" Value="False">
+                                            <Setter TargetName="RelocationText" Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+
+                                        <DataTrigger Binding="{Binding Note}" Value="{x:Null}">
+                                            <Setter TargetName="NoteText" Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+
+                                        <Trigger SourceName="CardRoot" Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="CardRoot" Property="Background"
+                                                    Value="{StaticResource PanelHoverBrush}"/>
+                                            <Setter TargetName="CardRoot" Property="BorderBrush"
+                                                    Value="{StaticResource MutedBrush}"/>
+                                        </Trigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Belegte Bereiche ohne Sektorkopf -->
+                        <StackPanel x:Name="RegionSection" Visibility="Collapsed" Margin="0,18,0,0">
+                            <TextBlock Style="{StaticResource Eyebrow}" Text="WEITERE BEREICHE"
+                                       Margin="0,0,0,4"/>
+                            <TextBlock Style="{StaticResource BodyMuted}" FontSize="12"
+                                       Margin="0,0,0,10" TextWrapping="Wrap"
+                                       Text="Belegt, aber ohne Sektorkopf — deshalb ohne Teilenummer und ohne Prüfsumme."/>
+
+                            <ItemsControl x:Name="RegionList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="0,0,0,12">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <TextBlock Grid.Column="0" Style="{StaticResource Eyebrow}"
+                                                           Text="{Binding Label}" VerticalAlignment="Top"/>
+
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Style="{StaticResource MonoSmall}"
+                                                               Foreground="{StaticResource TextBrush}">
+                                                        <Run Text="{Binding AddressRange, Mode=OneWay}"/>
+                                                        <Run Text="   "/>
+                                                        <Run Text="{Binding SizeText, Mode=OneWay}"/>
+                                                    </TextBlock>
+                                                    <TextBlock Style="{StaticResource MonoSmall}"
+                                                               Margin="0,3,0,0" TextWrapping="Wrap"
+                                                               Text="{Binding Description}"/>
+                                                </StackPanel>
+
+                                                <Button Grid.Column="2" Content="Extrahieren"
+                                                        Style="{StaticResource CardAction}"
+                                                        VerticalAlignment="Top"
+                                                        Click="OnExtractRegionClick"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- Aktionsleiste -->
+            <Border Grid.Row="2" Padding="28,16" Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <CheckBox x:Name="ScanToggle" Grid.Column="0" Style="{StaticResource Switch}"
+                              Content="Nur Standardadressen"
+                              ToolTip="Liest nur die fest verdrahteten Adressen wie die V2. Ohne Haken wird das ganze Abbild durchsucht." VerticalAlignment="Center"
+                              Checked="OnScanToggled" Unchecked="OnScanToggled"/>
+
+                    <TextBlock x:Name="StatusLine" Grid.Column="1" Style="{StaticResource MonoSmall}"
+                               VerticalAlignment="Center" Margin="24,0" TextTrimming="CharacterEllipsis"/>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal">
+                        <Button x:Name="RepairAllButton" Content="Alle Prüfsummen korrigieren"
+                                Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                                Visibility="Collapsed" Click="OnRepairAllClick"/>
+                        <Button x:Name="ExtractAllButton" Content="Alle Sektoren extrahieren"
+                                Style="{StaticResource PrimaryButton}" Click="OnExtractAllClick"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

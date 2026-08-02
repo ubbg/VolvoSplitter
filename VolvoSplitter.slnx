@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="VolvoSplitter.Cli/VolvoSplitter.Cli.csproj" />
+  <Project Path="VolvoSplitter.Core.Tests/VolvoSplitter.Core.Tests.csproj" />
+  <Project Path="VolvoSplitter.Core/VolvoSplitter.Core.csproj" />
+  <Project Path="VolvoSplitter.csproj" />
+</Solution>

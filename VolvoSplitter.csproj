@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>VolvoSplitter</AssemblyName>
+    <RootNamespace>VolvoSplitter</RootNamespace>
+    <ApplicationTitle>Volvo File Splitter</ApplicationTitle>
+    <Version>3.0.0</Version>
+  </PropertyGroup>
+
+  <!-- Die Schwesterprojekte liegen als Unterordner; das Wurzelprojekt darf ihre
+       Quelldateien nicht mitkompilieren. -->
+  <ItemGroup>
+    <Compile Remove="VolvoSplitter.Core\**;VolvoSplitter.Core.Tests\**;VolvoSplitter.Cli\**" />
+    <None Remove="VolvoSplitter.Core\**;VolvoSplitter.Core.Tests\**;VolvoSplitter.Cli\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="VolvoSplitter.Core\VolvoSplitter.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,128 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+
+namespace VolvoSplitter.Core;
+
+public enum SectorStatus
+{
+    /// <summary>Sektor gelesen, Prüfsumme stimmt.</summary>
+    Verified,
+
+    /// <summary>Sektor gelesen, Prüfsumme weicht ab — wird trotzdem geschrieben.</summary>
+    CrcMismatch,
+
+    /// <summary>An dieser Adresse steht kein lesbarer Sektor.</summary>
+    Missing
+}
+
+/// <summary>Ein im Abbild gefundener (oder fehlender) Sektor.</summary>
+public sealed class SectorInfo : INotifyPropertyChanged
+{
+    public required SectorKind Kind { get; init; }
+    public required string Label { get; init; }
+    public required string Prefix { get; init; }
+    public required long Start { get; init; }
+    public required long CpuOffset { get; init; }
+    public required SectorStatus Status { get; init; }
+
+    /// <summary>
+    /// Grund, warum kein Sektor gelesen werden konnte. Wird nach der
+    /// Bereichsanalyse präzisiert, sobald bekannt ist, was dort wirklich liegt.
+    /// </summary>
+    public string? MissingReason { get; set; }
+
+    public string PartNumber { get; init; } = "";
+    public long Length { get; init; }
+    public long End => Start + Length;
+    public long CpuEnd => CpuOffset + Length;
+
+    public uint CrcStored { get; init; }
+    public uint CrcComputed { get; init; }
+
+    /// <summary>Sektor reichte über das Dateiende hinaus und wurde gekürzt.</summary>
+    public bool Truncated { get; init; }
+
+    /// <summary>
+    /// Adresse laut Tabelle, wenn der Sektor woanders gefunden wurde.
+    /// Null, solange er dort liegt, wo er hingehört.
+    /// </summary>
+    public long? ExpectedStart { get; init; }
+
+    public bool Relocated => ExpectedStart is not null;
+
+    // --- Felder aus dem ASCII-Kopf ---
+    public string Project { get; init; } = "";      // p=
+    public string BuildDate { get; init; } = "";    // d=
+    public string BuildTime { get; init; } = "";    // t=
+    public string SourceFile { get; init; } = "";   // f=
+    public string Baseline { get; init; } = "";     // b=
+    public IReadOnlyDictionary<string, string> HeaderFields { get; init; } =
+        new Dictionary<string, string>();
+
+    public bool Present => Status != SectorStatus.Missing;
+    public bool CrcOk => Status == SectorStatus.Verified;
+
+    public string OutputName => Prefix + PartNumber;
+
+    /// <summary>Art des Datensatzes aus dem Dateinamen im Kopf (dst1 / dst2 / pbc).</summary>
+    public string DataSetTag
+    {
+        get
+        {
+            if (SourceFile.Contains(".dst1")) return "dst1";
+            if (SourceFile.Contains(".dst2")) return "dst2";
+            if (SourceFile.Contains(".pbc")) return "pbc";
+            return "";
+        }
+    }
+
+    public string AddressRange => $"0x{Start:X6} – 0x{End:X6}";
+    public string CpuAddressRange => $"0x{CpuOffset:X6} – 0x{CpuEnd:X6}";
+    public string SizeText => $"{Length:N0} B";
+
+    /// <summary>Hinweistext bei abweichender Prüfsumme. Der Sektor bleibt nutzbar.</summary>
+    public string CrcAlert
+    {
+        get
+        {
+            string text = $"Datei 0x{CrcStored:X8}   berechnet 0x{CrcComputed:X8}   " +
+                          "— wird trotzdem geschrieben";
+            if (Truncated)
+                text += "\nSektor reicht über das Dateiende hinaus und wurde gekürzt.";
+            return text;
+        }
+    }
+
+    /// <summary>Hinweis, wenn der Sektor nicht an der Standardadresse liegt.</summary>
+    public string RelocationNote => ExpectedStart is { } expected
+        ? $"Gefunden bei 0x{Start:X6} statt 0x{expected:X6} — Adresse weicht von der Tabelle ab"
+        : "";
+
+    /// <summary>
+    /// Weitere Fundstellen dieses Prüfwerts im Abbild, außerhalb des eigenen
+    /// Trailers. Das Steuergerät hält Kopien in Tabellen — eine nur im Sektor
+    /// korrigierte Prüfsumme passt dann nicht mehr zur Kopie.
+    /// </summary>
+    public IReadOnlyList<long> ChecksumCopies { get; set; } = [];
+
+    public bool HasChecksumCopies => ChecksumCopies.Count > 0;
+
+    public string ChecksumCopyNote => ChecksumCopies.Count == 0
+        ? ""
+        : $"Prüfwert 0x{CrcStored:X8} steht auch bei " +
+          string.Join(", ", ChecksumCopies.Select(a => $"0x{a:X6}")) +
+          " — beim Korrigieren dort ebenfalls anpassen";
+
+    private string? _note;
+    /// <summary>Letzte Rückmeldung zu diesem Sektor (extrahiert, korrigiert, ersetzt).</summary>
+    public string? Note
+    {
+        get => _note;
+        set { _note = value; OnPropertyChanged(); }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}

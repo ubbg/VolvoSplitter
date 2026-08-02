@@ -1,0 +1,12 @@
+# Build-Ausgaben
+bin/
+obj/
+dist/
+
+# IDE
+.idea/
+.vs/
+*.user
+
+# Referenz-Datenblätter (groß, nicht Teil des Quellcodes)
+*.pdf
