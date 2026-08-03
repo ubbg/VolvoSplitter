@@ -583,7 +583,7 @@ Eine **Prüfsummenstruktur** ist 32 Byte groß:
 | --- | --- | --- |
 | `+0x00` | u8 | `csBlockId` |
 | `+0x04` | u32 | `csStart` — CPU-Adresse, Beginn des geprüften Bereichs |
-| `+0x08` | u32 | `csEnd` — CPU-Adresse, einschließlich |
+| `+0x08` | u32 | `csEnd` — CPU-Adresse des **letzten Byte**, einschließlich |
 | `+0x0C` | u32 | `csStartVal` — Startwert, im Regelfall `0xFADECAFE` |
 | `+0x10` | u32 | `csExpectedVal` — Sollwert, im Regelfall `0xCAFEAFFE` |
 | `+0x14` | u32 | `blockIdRef` |
@@ -717,12 +717,25 @@ Zwei Fehler des Vorbilds werden ausdrücklich **nicht** übernommen:
   LDRAM-Adressen, Wächterwerte `0` und `0xFFFFFFFF` und schlichte Zahlen ohne Adresscharakter.
   Hier werden sie **roh ausgegeben, ohne Deutung**, und kein Eintrag wird als Adresse geprüft.
 
-### Angenommen, nicht bewiesen
+### Der Analogieschluss, der nicht galt
 
-`csEnd` zeigt — wie `blockEnd` — auf das **letzte Wort** des geprüften Bereichs; die Länge ist
-also `csEnd - csStart + 4`. Für `blockEnd` ist das an acht Blöcken nachgerechnet, für `csEnd` ist
-es der Analogieschluss. Stimmt er für einen Stand nicht, meldet das Werkzeug Abweichungen statt
-falscher Bestätigungen — es wird nicht so lange umgerechnet, bis etwas passt.
+Hier stand einmal eine Annahme: `csEnd` zeige — wie `blockEnd` — auf das **letzte Wort** des
+geprüften Bereichs, die Länge sei `csEnd - csStart + 4`. Für `blockEnd` war das nachgerechnet,
+für `csEnd` war es der Analogieschluss. Er ist falsch.
+
+Die beiden Felder folgen verschiedenen Konventionen. `blockEnd` zeigt auf das letzte **Wort**,
+den `0xDEADBEEF`-Abschluss. `csEnd` zeigt auf das letzte **Byte** des geprüften Bereichs; die
+Länge ist `csEnd - csStart + 1`. Der erste Block eines EDC17-Abbilds macht es unmittelbar
+sichtbar: `csStart` 0x80000000, `csEnd` 0x8000FFFB, `0xDEADBEEF` bei Datei-Offset 0xFFFC —
+0xFFFB ist keine Wortgrenze, und der geprüfte Bereich ist der Blockinhalt ohne den Abschluss.
+
+Über fünf EDC17-Abbilder gehen mit der Byte-Deutung 57 von 59 Prüfsummenstrukturen auf, mit der
+Wort-Deutung 11. Dass der Fehler so lange unentdeckt blieb, hat einen Grund: die 11 waren
+ausschließlich `ADD32`-Fälle, deren Wortschleife die drei überzähligen Bytes gar nicht liest.
+Ein Verfahren maskierte den Fehler der anderen beiden.
+
+Die zwei verbliebenen Abweichungen sind `ADD16`-Strukturen und bleiben ein offener Punkt; sie
+werden gemeldet, nicht passend gerechnet.
 
 ---
 

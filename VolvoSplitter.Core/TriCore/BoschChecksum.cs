@@ -96,7 +96,23 @@ public static class BoschChecksum
         return sum;
     }
 
-    /// <summary>Summe der 16-Bit-Worte, Überlauf verworfen.</summary>
+    /// <summary>
+    /// Summe der 16-Bit-Worte, Überlauf verworfen.
+    ///
+    /// <strong>Offener Punkt.</strong> In den fünf ausgewerteten EDC17-Abbildern
+    /// gehen alle <see cref="Crc32"/>- und <see cref="Add32"/>-Strukturen auf,
+    /// aber beide vorkommenden ADD16-Strukturen nicht — mit keiner
+    /// Bereichsdeutung. Auffällig: rechnet man ein 16-Bit-Wort weniger
+    /// (<c>csEnd - csStart</c> statt <c>+ 1</c>), stimmen in <em>beiden</em>
+    /// Fällen die unteren 16 Bit exakt (0x7FB8AFFE und 0xFC5AAFFE gegen
+    /// erwartete 0xCAFEAFFE), die oberen dagegen nicht. Das reicht für einen
+    /// Verdacht — ADD16 könnte 16-bittig vergleichen —, nicht für eine Regel.
+    ///
+    /// Bis das an mehr ADD16-Fällen entschieden ist, wird wie bei den anderen
+    /// Verfahren gerechnet und die Abweichung gemeldet. Ein Sonderweg, der die
+    /// beiden bekannten Fälle passend macht, wäre genau das Hinbiegen, das
+    /// dieses Werkzeug vermeidet.
+    /// </summary>
     public static uint Add16(ReadOnlySpan<byte> data, uint start)
     {
         uint sum = start;

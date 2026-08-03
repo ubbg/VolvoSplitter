@@ -464,4 +464,28 @@ public class BoschBlockChainTests
         Assert.Equal("34/1/MED17.1.6/5/P643//C643X5L8///", chain.Variant);
         Assert.Equal(0x402000 + BoschBlockChain.VariantOffset, chain.VariantOffset);
     }
+
+    /// <summary>
+    /// Die beiden Endfelder des Blockkopfs folgen <em>verschiedenen</em>
+    /// Konventionen: <c>blockEnd</c> zeigt auf das letzte Wort — den
+    /// <c>0xDEADBEEF</c>-Abschluss —, <c>csEnd</c> dagegen auf das letzte Byte
+    /// des geprüften Bereichs. Der Analogieschluss vom einen aufs andere ist
+    /// naheliegend und falsch; er stand einmal im Leser und ließ 48 von 59
+    /// Prüfsummen echter EDC17-Abbilder scheitern.
+    /// </summary>
+    [Fact]
+    public void ChecksumEnd_PointsAtTheLastByte_WhileBlockEndPointsAtTheLastWord()
+    {
+        var image = TriCoreDump.Pflash(0x200000,
+            (EntryFile, TriCoreDump.Block(0x10, 0x80018000, 0x2000, 0, "10SW008917")));
+        var layout = Layout(0x200000);
+
+        Assert.True(BoschBlockChain.TryReadHeader(image, layout, EntryFile, out var block));
+
+        var check = Assert.Single(BoschBlockChain.VerifyChecksums(image, layout, block!));
+        Assert.True(check.Ok);
+
+        Assert.Equal(0, block!.CpuEnd % 4);        // blockEnd: wortbündig
+        Assert.NotEqual(0, check.CsEnd % 4);       // csEnd: gerade nicht
+    }
 }

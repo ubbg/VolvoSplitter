@@ -7,6 +7,7 @@ namespace VolvoSplitter.Core.Tests;
 public class EcuDetectorTests
 {
     private const long TwoMib = 0x200000;
+    private const long FourMib = 0x400000;
 
     /// <summary>Codeähnlicher Block, dessen Zeigerdichte über der Schwelle liegt.</summary>
     private static byte[] PointerRichImage(long size, params (long At, byte[] Bytes)[] extra)
@@ -88,6 +89,28 @@ public class EcuDetectorTests
         Assert.Equal("TC1797", dump.Profile.MicroName);
         Assert.False(dump.Detection.DeviceAmbiguous);
         Assert.NotEmpty(dump.Layout!.EraseSectors);
+    }
+
+    [Fact]
+    public void ContinuousProgramFlash_OutweighsTheTabulatedTwoBankSplit()
+    {
+        // EDC17CP44-Abbilder (Bosch 1037540589) legen Blöcke auf 0x80200000 und
+        // 0x80340000 — Adressen, die es bei zwei 2-MiB-Bänken gar nicht gibt.
+        // Die Tabelle nennt TC1797, das Abbild widerspricht. Ohne diese Messung
+        // fielen die beiden oberen Blöcke durch die blockEnd-Regel und fehlten
+        // stillschweigend: ein nicht gefundener Block sieht aus wie keiner.
+        var image = TriCoreDump.Pflash(FourMib,
+            (0x000000, TriCoreDump.Block(0x10, 0x80000000, 0x4000, 0x80200000, "1037540589")),
+            (0x1F0000, Text("VAG EDC17CP44 0281020088")),
+            (0x200000, TriCoreDump.Block(0x80, 0x80200000, 0x4000, 0x80340000, "1037540589")),
+            (0x340000, TriCoreDump.Block(0x60, 0x80340000, 0x4000, 0, "1037540589")));
+
+        var dump = FlashDump.FromBytes(image, "durchgehend.bin");
+
+        Assert.Equal(3, dump.Sectors.Count);
+        Assert.All(dump.Sectors, s => Assert.Equal(SectorStatus.Verified, s.Status));
+        Assert.Contains(dump.Detection.Evidence,
+                        e => e.Contains("durchgehendem PFLASH") && e.Contains("TC1797"));
     }
 
     [Fact]

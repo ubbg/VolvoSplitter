@@ -352,11 +352,21 @@ public static class EcuDetector
     /// Zählt je Baustein, wie viele Blockköpfe seine Bankaufteilung bestätigt.
     /// Nur eine richtige Bankgrenze lässt <c>blockEnd</c> und
     /// <c>0xDEADBEEF</c> zusammenpassen — das ist eine Messung, kein Raten.
+    ///
+    /// Mitgezählt wird auch <see cref="TriCoreDevice.LinearProgramFlash"/>, die
+    /// Aufteilung ohne Banksprung. Ohne sie bliebe ein Abbild mit durchgehendem
+    /// Programmflash unerkannt: seine Blöcke jenseits der 2-MiB-Grenze fallen
+    /// bei jedem Zweibank-Baustein durch die <c>blockEnd</c>-Regel und fehlen
+    /// dann schlicht — gemeldet würde nichts, denn ein nicht gefundener Block
+    /// sieht aus wie ein nicht vorhandener.
     /// </summary>
     private static List<(TriCoreDevice Device, int Count)> HeaderCounts(byte[] data,
                                                                        TriCoreDevice? extra)
     {
-        var devices = new List<TriCoreDevice>(TriCoreDevice.Mapped);
+        var devices = new List<TriCoreDevice>(TriCoreDevice.Mapped)
+        {
+            TriCoreDevice.LinearProgramFlash
+        };
         if (extra is not null && devices.All(d => d.Name != extra.Name)) devices.Add(extra);
 
         return devices

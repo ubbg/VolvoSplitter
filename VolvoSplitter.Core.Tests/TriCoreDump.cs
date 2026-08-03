@@ -184,7 +184,7 @@ public static class TriCoreDump
             long at = BoschBlockChain.HeaderSize + i * (long)BoschBlockChain.ChecksumStructureSize;
             data[at] = id;
             TestDump.WriteLe(data, at + 0x04, (uint)(cpuStart + from));
-            TestDump.WriteLe(data, at + 0x08, (uint)(cpuStart + to - 4));   // letztes Wort
+            TestDump.WriteLe(data, at + 0x08, (uint)(cpuStart + to - 1));   // letztes Byte
             TestDump.WriteLe(data, at + 0x0C, BoschChecksum.DefaultStartValue);
             TestDump.WriteLe(data, at + 0x10, BoschChecksum.DefaultExpectedValue);
             TestDump.WriteLe(data, at + 0x14, id);

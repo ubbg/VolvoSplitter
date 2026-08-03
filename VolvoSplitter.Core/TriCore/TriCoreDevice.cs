@@ -142,6 +142,36 @@ public sealed record TriCoreDevice(string Name, IReadOnlyList<FlashBank> Program
         return null;
     }
 
+    /// <summary>
+    /// Aufteilung mit <em>durchgehendem</em> Programmflash ab
+    /// <see cref="PflashBase"/> über das ganze Abbild — ohne den Banksprung nach
+    /// <c>0x80800000</c>, den TC1797 macht.
+    ///
+    /// Sie ist keine Behauptung über einen bestimmten Baustein, sondern ein
+    /// messbarer Gegenkandidat für <see cref="EcuDetector"/>: EDC17CP44-Abbilder
+    /// (Bosch 1037540589) nennen in ihren Blockköpfen <c>0x80200000</c> und
+    /// <c>0x80340000</c> — Adressen, die es bei zwei 2-MiB-Bänken gar nicht gibt.
+    /// Mit dieser Aufteilung bestätigen dieselben Abbilder acht statt sechs
+    /// Blockköpfe und alle dreizehn statt zehn Prüfsummen.
+    ///
+    /// Ohne Sektorkarte: welcher Baustein das ist, bleibt damit offen — die
+    /// Bankaufteilung ist gemessen, der Baustein nicht.
+    ///
+    /// <strong>Zweite Quelle.</strong> Eine unabhängige Analyse derselben
+    /// Abbilder nennt dieselben zwei Formen „Familie A“ (Single-Bank,
+    /// Datei = Adresse − 0x80000000) und „Familie B“ (Dual-Bank, obere Bank
+    /// = Adresse − 0x80600000, also 0x80800000 → Datei 0x200000) und erkennt sie
+    /// am Feld bei +0x08 des ersten Blockkopfs: unter 0x80400000 heißt Familie A.
+    /// Das Feld ist <c>nextSector</c> der Blockkette. Diese Abkürzung wird hier
+    /// bewusst <em>nicht</em> übernommen — sie hinge an einem einzigen Wort eines
+    /// einzigen Blocks. Die Zählung bestätigter Blockköpfe misst dasselbe an
+    /// allen Blöcken und ordnet die fünf ausgewerteten Abbilder genauso ein.
+    /// </summary>
+    public static TriCoreDevice LinearProgramFlash =>
+        new("TriCore mit durchgehendem PFLASH", [], null, ExternalBase,
+            "Durchgehender Programmflash ab 0x80000000 — am Abbild gemessen, " +
+            "Baustein und Sektoreinteilung bleiben offen");
+
     /// <summary>Benannter Baustein ohne Sektorkarte.</summary>
     public static TriCoreDevice Unmapped(string name) =>
         new(name, [], null, ExternalBase,

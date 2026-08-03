@@ -560,12 +560,25 @@ public static class BoschBlockChain
     /// Rechnet jede Prüfsummenstruktur des Blocks nach. Die Struktur ist
     /// 32 Byte groß und beginnt bei +0x34; danach folgt das Prüfwort des Blocks.
     ///
-    /// <strong>Angenommen, nicht bewiesen:</strong> <c>csEnd</c> zeigt wie
-    /// <c>blockEnd</c> auf das <em>letzte Wort</em> des geprüften Bereichs, die
-    /// Länge ist also <c>csEnd - csStart + 4</c>. Für <c>blockEnd</c> ist das an
-    /// acht Blöcken nachgerechnet; für <c>csEnd</c> ist es der Analogieschluss.
-    /// Stimmt er nicht, meldet das Werkzeug Abweichungen statt falscher
-    /// Bestätigungen — es wird nicht solange umgerechnet, bis etwas passt.
+    /// <strong>Gemessen:</strong> <c>csEnd</c> zeigt auf das <em>letzte Byte</em>
+    /// des geprüften Bereichs, die Länge ist also <c>csEnd - csStart + 1</c>.
+    /// <c>blockEnd</c> folgt einer anderen Konvention — es zeigt auf den
+    /// <c>0xDEADBEEF</c>-Abschluss, also auf das letzte <em>Wort</em>. Der
+    /// naheliegende Analogieschluss von <c>blockEnd</c> auf <c>csEnd</c> ist
+    /// damit falsch; er stand hier und wurde widerlegt.
+    ///
+    /// Beleg: über fünf EDC17-Abbilder (Audi A4, VW Touran, Porsche Panamera,
+    /// zwei weitere) gehen mit <c>+1</c> 57 von 59 Strukturen auf, mit <c>+4</c>
+    /// nur 11 — und die 11 sind ausschließlich <c>ADD32</c>-Fälle, deren
+    /// Wortschleife die drei überzähligen Bytes ohnehin nicht liest. Der erste
+    /// Block eines Abbilds macht es unmittelbar sichtbar: <c>csStart</c>
+    /// 0x80000000, <c>csEnd</c> 0x8000FFFB, <c>0xDEADBEEF</c> bei Datei-Offset
+    /// 0xFFFC — der geprüfte Bereich ist der Blockinhalt ohne den Abschluss,
+    /// und 0xFFFB ist keine Wortgrenze.
+    ///
+    /// Die beiden verbliebenen Abweichungen sind <c>ADD16</c>-Strukturen; siehe
+    /// <see cref="BoschChecksum"/>. Sie werden als Abweichung gemeldet, nicht
+    /// passend gerechnet.
     /// </summary>
     public static List<BoschChecksumStructure> VerifyChecksums(byte[] data, PhysicalLayout layout,
                                                                BoschBlock block)
@@ -609,7 +622,8 @@ public static class BoschBlockChain
         if (csEnd < csStart)
             return Unchecked("Bereich ist leer oder verdreht — nicht nachgerechnet");
 
-        long length = csEnd - csStart + 4;
+        // csEnd ist das letzte Byte des Bereichs, nicht das letzte Wort.
+        long length = csEnd - csStart + 1;
 
         if (layout.ToFile(csStart) is not { } from || layout.ToFile(csEnd) is not { } to)
             return Unchecked("Bereich liegt außerhalb des Abbilds — nicht nachgerechnet");
