@@ -668,6 +668,24 @@ public static class BoschBlockChain
     ///
     /// Wird sie nicht gefunden, gibt es keinen Ratewert und keine Null, sondern
     /// gar keine CVN.
+    ///
+    /// <strong>Offener Punkt: es kann mehrere geben.</strong> Der Bosch-Funktionsrahmen
+    /// für MED17.5 spricht im Kapitel zu OBD-Mode $09 durchgehend im Plural —
+    /// „die Anzahl der Antwortbotschaften ist abhängig von der Anzahl der
+    /// CVNunknowns“, und über CAN werden „alle CVNunknowns in einer einzigen
+    /// Botschaft gesendet“. Ein Steuergerät kann also mehr als eine CVN melden.
+    /// Diese Suche bricht beim ersten Fund ab und gibt genau eine zurück.
+    ///
+    /// Ob die weiteren CVNs überhaupt eine eigene Konfigurationsstruktur dieser
+    /// Form im Abbild haben, ist ungeprüft — in den fünf ausgewerteten Abbildern
+    /// wurde nicht danach gesucht. Solange das offen ist, wäre „die CVN“ im
+    /// Plural auszugeben eine Behauptung; der Einzelwert ist belegt, seine
+    /// Vollständigkeit nicht. Wer das entscheidet, braucht ein Abbild, dessen
+    /// Diagnose nachweislich mehrere CVNs meldet.
+    ///
+    /// Nebenbefund aus derselben Quelle: eine CVN kann kürzer als vier Byte
+    /// sein — sie wird dann mit vorangestellten Füllbytes übertragen. Der hier
+    /// gerechnete Wert ist immer eine volle CRC32.
     /// </summary>
     public static BoschCvn? FindCvn(byte[] data, PhysicalLayout layout, BoschBlock dataset)
     {

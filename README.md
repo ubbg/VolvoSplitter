@@ -689,6 +689,15 @@ sie ist die Zahl, die die OBD-Diagnose zur Prüfung der Kalibrierung meldet. Wir
 Konfigurationsstruktur nicht gefunden, gibt es keinen Ratewert und keine Null, sondern
 schlicht keine CVN.
 
+> **Offener Punkt — es kann mehrere CVNs geben.** Der Bosch-Funktionsrahmen für MED17.5
+> spricht im Kapitel zu OBD-Mode $09 durchgehend im Plural: „die Anzahl der Antwortbotschaften
+> ist abhängig von der Anzahl der CVNunknowns“, über CAN werden „alle CVNunknowns in einer
+> einzigen Botschaft gesendet“. Dieser Leser bricht beim ersten Fund ab und gibt genau eine
+> zurück. Ob die weiteren überhaupt eine eigene Konfigurationsstruktur dieser Form im Abbild
+> haben, ist ungeprüft — in den fünf ausgewerteten Abbildern wurde nicht danach gesucht. Der
+> ausgewiesene Wert ist belegt, seine Vollständigkeit nicht. Aus derselben Quelle: eine CVN
+> kann kürzer als vier Byte sein; der hier gerechnete Wert ist immer eine volle CRC32.
+
 ### Herkunft dieser Formatkenntnis
 
 Die Struktur stammt aus **zwei unabhängig entstandenen Community-Werkzeugen**, die im Blockkopf
