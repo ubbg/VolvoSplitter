@@ -908,18 +908,15 @@ Abbilder — sie enthalten eine VIN — nicht versehentlich eingecheckt werden.
 
 ## Referenzunterlagen
 
-Im Repository liegen die NXP-Dokumente, auf denen die Interpretation beruht:
-
-| Datei | Verwendet für |
-| --- | --- |
-| `MPC5777CRM, MPC5777C Reference Manual.pdf` | Kapitel 4, Tabellen 4-2 und 4-3 — physisches Speicherlayout, UTEST-Inhalt |
-| `MPC5777CFS.pdf` | Datenblatt des MPC5777C |
-| `AN4868.pdf` | EEPROM-Emulation — Blockstatus-Doppelwörter, angehängte Records |
-
-Nicht im Repository, aber ausgewertet:
+Die Unterlagen liegen nicht im Repository — es sind Herstellerdokumente, die NXP und
+Infineon selbst veröffentlichen. Hier stehen die Fundstellen, auf denen die Interpretation
+beruht:
 
 | Quelle | Verwendet für |
 | --- | --- |
+| [NXP MPC5777C Reference Manual](https://www.nxp.com/docs/en/reference-manual/MPC5777CRM.pdf) | Kapitel 4, Tabellen 4-2 und 4-3 — physisches Speicherlayout, UTEST-Inhalt |
+| [NXP MPC5777C Factsheet](https://www.nxp.com/docs/en/fact-sheet/MPC5777CFS.pdf) | Datenblatt des MPC5777C |
+| [NXP AN4868](https://www.nxp.com/docs/en/application-note/AN4868.pdf) | EEPROM-Emulation — Blockstatus-Doppelwörter, angehängte Records |
 | Infineon TC1796 Data Sheet | PFLASH- und DFLASH-Größen, Sektoreinteilung, Adressen |
 | Infineon TC1797 Data Sheet | PMU0/PMU1, Sektoreinteilung, DFLASH, EBU |
 | [`fanyi3315/bosch-med17-block-reader`](https://github.com/fanyi3315/bosch-med17-block-reader) | Blockkopf und Verkettung — Community-Reverse-Engineering an *einem* Abbild |

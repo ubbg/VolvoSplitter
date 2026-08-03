@@ -12,3 +12,8 @@ dist/
 # gehören deshalb nicht ins Repository — die Tests kommen ohne sie aus.
 fixtures/
 *.ori
+
+# Herstellerunterlagen (NXP, Infineon). Sie sind die Belegquelle, gehören aber
+# nicht ins Repository: NXP und Infineon veröffentlichen sie selbst, und das
+# Reference Manual allein wiegt 22 MB. Die Fundstellen stehen im README.
+*.pdf
