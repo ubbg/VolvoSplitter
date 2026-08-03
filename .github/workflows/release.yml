@@ -21,9 +21,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # Ohne ref-Angabe gilt github.ref: beim Tag-Push der Tag selbst, beim
+      # manuellen Start der gewählte Branch. Den Tag hier auszuchecken ginge
+      # nicht — beim manuellen Start soll er ja erst entstehen.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -127,8 +128,11 @@ jobs:
             @('--generate-notes')
           }
 
+          # --target legt den Tag beim manuellen Start am ausgecheckten Commit
+          # an. Beim Tag-Push existiert er bereits und der Wert wird ignoriert.
           $ghArgs = @('release', 'create', $tag) + $assets +
-                    @('--title', "Volvo File Splitter $tag") + $notes
+                    @('--target', '${{ github.sha }}',
+                      '--title', "Volvo File Splitter $tag") + $notes
 
           & gh $ghArgs
           if ($LASTEXITCODE -ne 0) { throw "gh release create ist mit $LASTEXITCODE fehlgeschlagen." }
