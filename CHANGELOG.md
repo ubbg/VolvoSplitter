@@ -3,7 +3,7 @@
 Das Format folgt lose [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
-## Unveröffentlicht
+## v1.1.0
 
 ### VAG-Steuergeräte auf Infineon TriCore lesen
 
@@ -32,6 +32,30 @@ Das ist keine Lücke, sondern eine Festlegung: `EcuProfile.SupportsWriteBack` is
 * **Kennungen mit Fundort** — Hardware-, Software- und Blockkennungen, Steuergerätetyp und VIN,
   jeweils in strenger Form. Ein Fundort ist ein Beleg, eine Zeichenkette allein nur eine
   Beobachtung.
+
+### An echten Abbildern nachgerechnet
+
+Fünf EDC17-Abbilder (Audi A4, VW Touran, Porsche Panamera, zwei weitere) haben zwei Fehler
+aufgedeckt. Beide sind behoben, beide durch Tests festgehalten.
+
+* **`csEnd` war um drei Byte falsch gedeutet.** Der Leser nahm an, `csEnd` zeige wie `blockEnd`
+  auf das letzte *Wort* des Bereichs. Tatsächlich zeigt es auf das letzte *Byte*: Im ersten
+  Block steht `csStart` 0x80000000, `csEnd` 0x8000FFFB, der `0xDEADBEEF`-Abschluss bei
+  Datei-Offset 0xFFFC — 0xFFFB ist keine Wortgrenze. Über alle fünf Abbilder gehen mit der
+  Byte-Deutung 57 von 59 Prüfsummenstrukturen auf, mit der Wort-Deutung 11. Die 11 waren
+  ausschließlich `ADD32`-Fälle, deren Wortschleife die drei überzähligen Bytes nie las — der
+  Fehler blieb dadurch lange unsichtbar.
+* **Abbilder mit durchgehendem Programmflash fanden nur sechs von acht Blöcken.**
+  EDC17CP44-Abbilder legen Blöcke auf 0x80200000 und 0x80340000 — Adressen, die es bei zwei
+  2-MiB-Bänken nicht gibt. Die Steuergerätetabelle nennt für EDC17CP44 einen TC1797, und
+  die Gegenprobe prüfte die durchgehende Aufteilung gar nicht erst. Sie ist jetzt ein
+  eigener Kandidat: bestätigt sie mehr Blockköpfe, gewinnt sie — mit Belegzeile. Der
+  Baustein bleibt dabei offen, gemessen ist nur die Bankaufteilung.
+
+Alle fünf Abbilder liefern jetzt acht Blöcke. Die Prüfsummen gehen vollständig auf, außer bei
+zwei `ADD16`-Strukturen (siehe `BoschChecksum.Add16`, offener Punkt) und im Dataset-Block des
+Porsche-Abbilds — das ist eine getunte Datei, und dieselbe Firmware liegt unverändert daneben
+und geht auf. Genau diesen Unterschied soll das Werkzeug zeigen.
 
 ### Erkennung statt Dateigröße
 
