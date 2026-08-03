@@ -6,6 +6,8 @@
     <Version>1.0.0</Version>
     <Product>Volvo File Splitter</Product>
     <Company>ubbg</Company>
+    <Copyright>Copyright (c) 2026 ubbg</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
 </Project>

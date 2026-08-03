@@ -78,4 +78,5 @@ Erste Veröffentlichung.
 * 49 xUnit-Tests, deren Abbilder synthetisch erzeugt werden — echte Steuergerätedaten sind zum
   Testen nicht nötig.
 * Die NXP-Referenzunterlagen liegen im Repository, damit die Herleitung des Layouts nachvollzogen
-  werden kann.
+  werden kann. Sie stammen von NXP Semiconductors und sind von der MIT-Lizenz ausgenommen.
+* Veröffentlicht unter der MIT-Lizenz.
