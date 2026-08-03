@@ -317,7 +317,8 @@
                                                 </Grid.ColumnDefinitions>
 
                                                 <TextBlock Grid.Column="0" Style="{StaticResource Eyebrow}"
-                                                           Text="{Binding Label}" VerticalAlignment="Top"/>
+                                                           Text="{Binding Label}" VerticalAlignment="Top"
+                                                           TextWrapping="Wrap"/>
 
                                                 <StackPanel Grid.Column="1">
                                                     <TextBlock Style="{StaticResource MonoSmall}"
@@ -326,15 +327,81 @@
                                                         <Run Text="   "/>
                                                         <Run Text="{Binding SizeText, Mode=OneWay}"/>
                                                     </TextBlock>
+
+                                                    <!-- Physischer Block und rekonstruierte CPU-Adresse -->
+                                                    <TextBlock x:Name="OriginText"
+                                                               Style="{StaticResource MonoSmall}"
+                                                               Margin="0,3,0,0"
+                                                               Text="{Binding Origin}"/>
+
                                                     <TextBlock Style="{StaticResource MonoSmall}"
                                                                Margin="0,3,0,0" TextWrapping="Wrap"
                                                                Text="{Binding Description}"/>
+                                                    <TextBlock Style="{StaticResource BodyMuted}" FontSize="11"
+                                                               Margin="0,3,0,0"
+                                                               Text="{Binding ConfidenceText}"/>
                                                 </StackPanel>
 
                                                 <Button Grid.Column="2" Content="Extrahieren"
                                                         Style="{StaticResource CardAction}"
                                                         VerticalAlignment="Top"
                                                         Click="OnExtractRegionClick"/>
+                                            </Grid>
+                                        </Border>
+
+                                        <DataTemplate.Triggers>
+                                            <!-- Ohne bekanntes Layout gibt es keine Herkunftszeile -->
+                                            <DataTrigger Binding="{Binding Origin}" Value="">
+                                                <Setter TargetName="OriginText" Property="Visibility"
+                                                        Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- Physisches Speicherlayout des Mikrocontrollers -->
+                        <StackPanel x:Name="PartitionSection" Visibility="Collapsed" Margin="0,18,0,0">
+                            <TextBlock Style="{StaticResource Eyebrow}" Text="PHYSISCHE BLÖCKE"
+                                       Margin="0,0,0,4"/>
+                            <TextBlock Style="{StaticResource BodyMuted}" FontSize="12"
+                                       Margin="0,0,0,10" TextWrapping="Wrap"
+                                       Text="Aufteilung des Bausteins laut NXP-Referenzhandbuch, Tabelle 4-2 — Datei-Offset und rekonstruierte CPU-Adresse."/>
+
+                            <ItemsControl x:Name="PartitionList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="0,0,0,12">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="110"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <TextBlock Grid.Column="0" Style="{StaticResource Eyebrow}"
+                                                           Text="{Binding Label}" VerticalAlignment="Top"
+                                                           TextWrapping="Wrap"/>
+
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Style="{StaticResource MonoSmall}"
+                                                               Foreground="{StaticResource TextBrush}">
+                                                        <Run Text="{Binding FileRange, Mode=OneWay}"/>
+                                                        <Run Text="   CPU "/>
+                                                        <Run Text="{Binding CpuRange, Mode=OneWay}"/>
+                                                    </TextBlock>
+                                                    <TextBlock Style="{StaticResource MonoSmall}"
+                                                               Margin="0,3,0,0" TextWrapping="Wrap"
+                                                               Text="{Binding Description}"/>
+                                                    <TextBlock Style="{StaticResource BodyMuted}" FontSize="11"
+                                                               Margin="0,3,0,0" TextWrapping="Wrap"
+                                                               Text="{Binding Detail}"/>
+                                                </StackPanel>
+
+                                                <TextBlock Grid.Column="2" Style="{StaticResource MonoSmall}"
+                                                           VerticalAlignment="Top" Margin="12,0,0,0"
+                                                           Text="{Binding StateText}"/>
                                             </Grid>
                                         </Border>
                                     </DataTemplate>

@@ -49,8 +49,23 @@ public static class DumpReport
             text.AppendLine();
             text.AppendLine("Bereiche ohne Sektorkopf:");
             foreach (var region in dump.Regions)
-                text.AppendLine($"{region.Label,-14} {region.AddressRange}   " +
-                                $"{region.SizeText,12}   {region.Description}");
+            {
+                text.AppendLine($"{region.Label,-32} {region.AddressRange}   {region.SizeText,12}" +
+                                (region.CpuAddressRange is { } cpu ? $"   CPU {cpu}" : ""));
+                text.AppendLine($"{"",32} {region.Description} [{region.ConfidenceText}]");
+            }
+        }
+
+        if (dump.Partitions.Count > 0)
+        {
+            text.AppendLine();
+            text.AppendLine("Physische Blöcke (MPC5777C, Referenzhandbuch Tabelle 4-2):");
+            foreach (var partition in dump.Partitions)
+            {
+                text.AppendLine($"{partition.Label,-14} {partition.FileRange}   " +
+                                $"CPU {partition.CpuRange,-23} {partition.StateText}");
+                text.AppendLine($"{"",14} {partition.Description}");
+            }
         }
 
         return text.ToString();

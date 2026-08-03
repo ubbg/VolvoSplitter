@@ -96,6 +96,11 @@ public partial class MainWindow : Window
         RegionList.ItemsSource = _dump.Regions;
         RegionSection.Visibility = _dump.Regions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
+        PartitionList.ItemsSource = null;
+        PartitionList.ItemsSource = _dump.Partitions;
+        PartitionSection.Visibility = _dump.Partitions.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+
         Map.ImageSize = _dump.Size;
         Map.Sectors = _dump.Sectors;
         Map.Regions = _dump.Regions;

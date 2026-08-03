@@ -36,6 +36,8 @@ public sealed record SectorSlot(SectorKind Kind, string Label, string Prefix, lo
 ///     Länge = Endadresse - CPU-Offset + 44
 ///
 /// Das Abbild ist das rohe Flash ab 0x000000; im CPU-Adressraum liegt es ab 0x800000.
+/// Bei EMS2.4 können hinter diesen 8 MiB weitere physische Blöcke des MPC5777C
+/// angehängt sein — siehe <see cref="Mpc5777cLayout"/>.
 /// </summary>
 public static class FlashFormat
 {
@@ -89,11 +91,15 @@ public static class FlashFormat
         family == EcuFamily.Ems23 ? Ems23Slots : Ems24Slots;
 
     /// <summary>
-    /// Größe des Flash-Bausteins. Alles dahinter im Abbild ist der
-    /// angehängte EEPROM-Auszug.
+    /// Größe des Flash-Bereichs, den die Sektortabelle beschreibt — beim
+    /// MPC5777C der 8 MiB große Large Flash.
+    ///
+    /// Was im Abbild dahinter steht, ist <em>nicht</em> pauschal EEPROM: beim
+    /// MPC5777C folgen vier gewöhnliche 64-KiB-Flash-Blöcke und der UTEST-Bereich.
+    /// Welcher davon was enthält, sagt <see cref="Mpc5777cLayout"/>.
     /// </summary>
     public static long FlashSizeFor(EcuFamily family) =>
-        family == EcuFamily.Ems23 ? 0x400000 : 0x800000;
+        family == EcuFamily.Ems23 ? 0x400000 : Mpc5777cLayout.LargeFlashSize;
 
     public static string FamilyName(EcuFamily family) =>
         family == EcuFamily.Ems23 ? "EMS2.3" : "EMS2.4";
