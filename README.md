@@ -468,7 +468,7 @@ VolvoSplitter.Core/                Analyse, ohne WPF — von Oberfläche und CLI
 ├── DumpReport.cs                  Textbefund für Oberfläche und CLI
 └── Crc32.cs                       CRC32, Polynom 0xEDB88320
 
-VolvoSplitter.Core.Tests/          45 xUnit-Tests
+VolvoSplitter.Core.Tests/          49 xUnit-Tests
 └── TestDump.cs                    Synthetische Abbilder — keine echten Dumps nötig
 ```
 

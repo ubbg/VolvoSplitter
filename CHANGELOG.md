@@ -75,7 +75,7 @@ Erste Veröffentlichung.
 
 ### Sonstiges
 
-* 45 xUnit-Tests, deren Abbilder synthetisch erzeugt werden — echte Steuergerätedaten sind zum
+* 49 xUnit-Tests, deren Abbilder synthetisch erzeugt werden — echte Steuergerätedaten sind zum
   Testen nicht nötig.
 * Die NXP-Referenzunterlagen liegen im Repository, damit die Herleitung des Layouts nachvollzogen
   werden kann.
