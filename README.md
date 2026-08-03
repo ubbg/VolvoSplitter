@@ -59,7 +59,7 @@ Das Werkzeug macht daraus:
   Low/Mid und UTEST, beim TriCore für PMU0, PMU1, externen Flash und DFLASH
 * **Kennungen** — Fahrzeugdaten aus dem Volvo-Parametersektor bzw. Hardware-, Software- und
   Steuergerätekennungen aus dem Bosch-Abbild, jeweils **mit Fundort**
-* **Textbefund** — alles davon als `bericht.txt` bzw. in der Zwischenablage
+* **Befund** — alles davon als Text, **Markdown** oder **HTML**, bzw. in der Zwischenablage
 
 ---
 
@@ -83,7 +83,7 @@ Das Werkzeug macht daraus:
 
 ### Kommandozeile
 
-* Ganze Ordner in einem Lauf, alle Sektoren als Rohdateien plus `bericht.txt`
+* Ganze Ordner in einem Lauf, alle Sektoren als Rohdateien plus Befund
 * Dieselbe Analyse wie die Oberfläche — beide benutzen `VolvoSplitter.Core`
 * Läuft auf Windows, Linux und macOS
 
@@ -175,6 +175,7 @@ Optionen:
   -f, --fixed           Nur die fest verdrahteten Standardadressen lesen
   -o, --out <Ordner>    Zielordner (Standard: neben dem Abbild)
   -p, --profile <name>  Erkennung übersteuern
+  -r, --report-format <f>  Befund als txt (Vorgabe), md oder html
       --list-profiles   Bekannte Profile auflisten
   -h, --help            Diese Hilfe
 
@@ -182,6 +183,7 @@ Beispiele:
   volvosplit C:\Dumps\ecu_Micro.mpc
   volvosplit C:\Dumps --out C:\Ausgabe
   volvosplit ecu.ori --profile tc1797
+  volvosplit ecu.bin --report-format html
 ```
 
 | Option | Wirkung |
@@ -189,6 +191,7 @@ Beispiele:
 | `-f`, `--fixed` | Nur die Standardadressen lesen, kein Suchlauf über das ganze Abbild |
 | `-o`, `--out <Ordner>` | Gemeinsamer Zielordner statt eines Ordners neben jedem Abbild |
 | `-p`, `--profile <name>` | Erkennung übersteuern: `ems23`, `ems24`, `tricore`, `tc1796`, `tc1797`, `unknown` |
+| `-r`, `--report-format <f>` | `txt` (Vorgabe), `md` oder `html`. Unbekanntes bricht ab, statt still auf Text zurückzufallen |
 | `--list-profiles` | Bekannte Profile auflisten |
 | `-h`, `--help`, `/?` | Hilfe ausgeben |
 
@@ -197,7 +200,14 @@ nur die oberste Ebene. Mehrfach genannte Dateien werden ohne Rücksicht auf Gro�
 entdoppelt.
 
 **Zielordner:** ohne `--out` entsteht `<abbildname>_sektoren/` neben dem Abbild, mit `--out`
-stattdessen `<zielordner>/<abbildname>/`. In beiden Fällen landet dort zusätzlich `bericht.txt`.
+stattdessen `<zielordner>/<abbildname>/`. In beiden Fällen landet dort zusätzlich der Befund als
+`bericht.txt`, `bericht.md` oder `bericht.html` — je nach `--report-format`.
+
+**Berichtsformate.** Der Befund wird einmal aufgebaut und wahlweise als Text, Markdown oder HTML
+ausgegeben; der Inhalt ist in allen dreien derselbe. Markdown liefert echte Tabellen für Ticket
+oder Dokumentation. HTML ist eine eigenständige Seite mit eingebettetem Stil — kein Verweis nach
+außen, hell und dunkel über `prefers-color-scheme`, und **abweichende Prüfsummen sind farblich
+abgesetzt**. In der Oberfläche entscheidet die Endung im Speichern-Dialog über das Format.
 
 **Ausgabe:**
 

@@ -3,6 +3,37 @@
 Das Format folgt lose [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
+## Unveröffentlicht
+
+### Bericht als Text, Markdown oder HTML
+
+Der Befund lässt sich jetzt in drei Formaten speichern. In der Oberfläche entscheidet die Endung
+im Speichern-Dialog (`.txt`, `.md`, `.html`), im Stapelbetrieb der neue Schalter
+`--report-format txt|md|html`. Ein unbekannter Wert bricht ab, statt still auf Text
+zurückzufallen — sonst bekäme man eine `.txt`, wo man eine `.html` erwartet hat.
+
+Der Bericht wird dafür **einmal aufgebaut und dreimal ausgegeben**: `DumpReport.Compose` liefert
+ein Dokument aus wenigen Bausteinen (Überschrift, Absatz, Aufzählung, Feldliste, Tabelle,
+vorformatierter Block, Gruppe), drei Ausgeber setzen es um. Ein neuer Abschnitt erscheint dadurch
+in allen drei Formaten, ohne dass ein Ausgeber angefasst werden muss.
+
+* **Markdown** bekommt echte Tabellen statt ausgerichteter Leerzeichen. Der Unterstrich wird
+  bewusst *nicht* maskiert: CommonMark liest ihn im Wortinneren nicht als Betonung, und die Werte
+  dieses Berichts sind voll davon (`EV_ECM30TDI011`, `SB_CRC32_ALGO_E`).
+* **HTML** ist eine eigenständige Seite mit eingebettetem Stil, ohne Verweis nach außen, hell und
+  dunkel über `prefers-color-scheme`. Zeilen tragen ein Gewicht: eine abweichende Prüfsumme wird
+  farblich abgesetzt — sie ist die Aussage, die zuerst auffallen soll.
+* **Text** bleibt die Vorgabe. Spaltenbreiten ergeben sich jetzt aus dem breitesten Eintrag statt
+  fest verdrahtet zu sein; dadurch läuft keine Spalte mehr über. Das Zeichenbild ändert sich
+  dadurch leicht, der Inhalt nicht.
+
+`DumpReport.Build(dump)` ohne Formatangabe liefert unverändert Text — bestehende Aufrufer bleiben
+unberührt. Der Bericht war bislang ungetestet; er hat jetzt zwanzig Tests, darunter die Probe,
+dass alle drei Formate dieselben Angaben tragen, und dass Markup in einem Dateinamen als Text
+auf der HTML-Seite landet statt als Tag.
+
+---
+
 ## v1.2.0
 
 ### VAG-Teilenummer und Softwarestand werden gelesen

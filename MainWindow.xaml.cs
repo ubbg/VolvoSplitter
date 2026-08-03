@@ -673,14 +673,22 @@ public partial class MainWindow : Window
         {
             Title = "Bericht speichern",
             FileName = stem + "_bericht.txt",
-            Filter = "Textdatei (*.txt)|*.txt|Alle Dateien (*.*)|*.*",
+            DefaultExt = "txt",
+            Filter = "Textdatei (*.txt)|*.txt|" +
+                     "Markdown (*.md)|*.md|" +
+                     "HTML-Seite (*.html)|*.html|" +
+                     "Alle Dateien (*.*)|*.*",
             InitialDirectory = _dump.Directory
         };
         if (dialog.ShowDialog(this) != true) return;
 
         try
         {
-            File.WriteAllText(dialog.FileName, DumpReport.Build(_dump));
+            // Die Endung entscheidet, nicht der gewählte Filter — dann stimmt es
+            // auch, wenn jemand den Namen samt Endung von Hand tippt.
+            var format = DumpReport.FormatFor(dialog.FileName);
+
+            File.WriteAllText(dialog.FileName, DumpReport.Build(_dump, format));
             UpdateStatusLine($"Bericht geschrieben nach {dialog.FileName}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
