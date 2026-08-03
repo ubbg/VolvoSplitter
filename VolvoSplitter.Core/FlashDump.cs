@@ -20,6 +20,7 @@ public sealed class FlashDump
         SourcePath = path;
         _data = data;
         Family = FlashFormat.DetectFamily(data.LongLength);
+        Layout = Mpc5777cLayout.For(Family, data.LongLength);
         Sectors = [];
     }
 
@@ -34,10 +35,19 @@ public sealed class FlashDump
 
     public IReadOnlyList<SectorInfo> Sectors { get; private set; }
 
-    /// <summary>Belegte Bereiche ohne Sektorkopf — Programmcode, Chiffretext, EEPROM.</summary>
+    /// <summary>Belegte Bereiche ohne Sektorkopf — Programmcode, opake Blöcke, NVM-Daten.</summary>
     public IReadOnlyList<FlashRegion> Regions { get; private set; } = [];
 
-    /// <summary>Größe des Flash-Bausteins; alles dahinter ist angehängt.</summary>
+    /// <summary>
+    /// Physisches Speicherlayout des Mikrocontrollers, falls die Dateigröße dazu
+    /// passt. Null heißt: Datei-Offsets bleiben die einzige belastbare Aussage.
+    /// </summary>
+    public Mpc5777cLayout? Layout { get; }
+
+    /// <summary>Die physischen Blöcke des Bausteins mit ihrem Zustand im Abbild.</summary>
+    public IReadOnlyList<PartitionInfo> Partitions { get; private set; } = [];
+
+    /// <summary>Größe des Flash-Bereichs, den die Sektortabelle beschreibt.</summary>
     public long FlashSize => FlashFormat.FlashSizeFor(Family);
     public VehicleInfo? Vehicle { get; private set; }
 
@@ -88,7 +98,8 @@ public sealed class FlashDump
 
         Sectors = sectors;
         Vehicle = ReadVehicleInfo();
-        Regions = RegionScanner.Scan(_data, FlashSize, sectors);
+        Regions = RegionScanner.Scan(_data, FlashSize, sectors, Layout);
+        Partitions = DescribePartitions();
 
         foreach (var sector in sectors)
         {
@@ -116,13 +127,71 @@ public sealed class FlashDump
         string what = region.Kind switch
         {
             RegionKind.Code => "dort steht Programmcode im Klartext, aber ohne Sektorkopf",
-            RegionKind.Opaque => "dort steht verschlüsselter oder signierter Inhalt",
-            RegionKind.Eeprom => "dort beginnt der angehängte EEPROM-Auszug",
+            RegionKind.Opaque => "dort steht Inhalt in unbekanntem Format",
+            RegionKind.NvmData => "dort stehen laufzeitveränderte NVM-Daten",
             _ => "dort stehen Daten ohne Sektorkopf"
         };
 
         return $"Kein Sektorkopf bei 0x{sector.Start:X6} — {what} " +
                $"({region.AddressRange}, {region.SizeText})";
+    }
+
+    /// <summary>
+    /// Bewertet jeden physischen Block: gelöscht, nicht ausgelesen oder belegt.
+    /// Das trennt die vier Low/Mid-Blöcke und UTEST voneinander, statt alles
+    /// hinter dem Large Flash in einen Topf zu werfen.
+    /// </summary>
+    private IReadOnlyList<PartitionInfo> DescribePartitions()
+    {
+        if (Layout is null) return [];
+
+        var result = new List<PartitionInfo>();
+
+        foreach (var partition in Layout.Partitions)
+        {
+            long end = Math.Min(partition.FileEnd, _data.LongLength);
+
+            if (IsErased(partition.FileStart, end))
+            {
+                // UTEST kann auf einem Seriengerät nicht leer sein: NXP
+                // programmiert dort ab Werk Sensorkalibrierung und Chip-Kennung
+                // (Referenzhandbuch, Tabelle 4-3). Vollständig 0xFF heißt also,
+                // dass das Auslesegerät den Bereich nicht erfasst hat.
+                result.Add(new PartitionInfo(partition,
+                    partition.Type == FlashBlockType.Utest ? PartitionState.NotRead : PartitionState.Erased,
+                    partition.Type switch
+                    {
+                        FlashBlockType.Utest =>
+                            "Vollständig 0xFF — vom Auslesegerät nicht erfasst. UTEST trägt ab Werk " +
+                            "Sensorkalibrierung und Chip-Kennung und kann nicht leer sein.",
+                        FlashBlockType.Low or FlashBlockType.Mid =>
+                            "Vollständig 0xFF — freier Block. Bei der EEPROM-Emulation ist das der " +
+                            "mögliche Tauschpartner für einen Block-Swap.",
+                        _ => "Vollständig 0xFF — gelöscht."
+                    }));
+                continue;
+            }
+
+            var inside = new List<string>();
+            inside.AddRange(Sectors.Where(s => s.Present && partition.Contains(s.Start))
+                                   .Select(s => $"Sektor {s.Label}"));
+            inside.AddRange(Regions.Where(r => partition.Contains(r.Start))
+                                   .Select(r => r.Label));
+
+            result.Add(new PartitionInfo(partition, PartitionState.Occupied,
+                inside.Count > 0
+                    ? string.Join(", ", inside)
+                    : "Belegt, Inhalt nicht weiter eingeordnet"));
+        }
+
+        return result;
+    }
+
+    private bool IsErased(long from, long to)
+    {
+        for (long i = from; i < to; i++)
+            if (_data[i] != 0xFF) return false;
+        return true;
     }
 
     /// <summary>

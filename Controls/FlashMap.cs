@@ -51,7 +51,7 @@ public sealed class FlashMap : FrameworkElement
         set => SetValue(ImageSizeProperty, value);
     }
 
-    /// <summary>Belegte Bereiche ohne Sektorkopf — Code, Chiffretext, EEPROM.</summary>
+    /// <summary>Belegte Bereiche ohne Sektorkopf — Code, opake Blöcke, NVM-Daten.</summary>
     public IReadOnlyList<FlashRegion>? Regions
     {
         get => (IReadOnlyList<FlashRegion>?)GetValue(RegionsProperty);
@@ -117,17 +117,16 @@ public sealed class FlashMap : FrameworkElement
 
         long occupied = 0;
 
-        // Bereiche ohne Sektorkopf zuerst, in gedecktem Ton: sie sind der
-        // Untergrund, vor dem die benannten Sektoren stehen.
-        var neutral = new SolidColorBrush(Color.FromRgb(0x3A, 0x45, 0x52));
-        neutral.Freeze();
-
+        // Bereiche ohne Sektorkopf zuerst, in gedeckten Tönen: sie sind der
+        // Untergrund, vor dem die benannten Sektoren stehen. Die Art bleibt
+        // dabei unterscheidbar — Code, NVM-Daten und opake Blöcke sind
+        // grundverschiedene Dinge und dürfen nicht gleich aussehen.
         foreach (var region in Regions ?? [])
         {
             occupied += region.Length;
             double ry = Snap(top + height * region.Start / (double)ImageSize);
             double rh = Math.Max(MinBandHeight, Math.Round(height * region.Length / (double)ImageSize));
-            dc.DrawRectangle(neutral, null, new Rect(bandLeft, ry, BandWidth, rh));
+            dc.DrawRectangle(RegionBrush(region.Kind), null, new Rect(bandLeft, ry, BandWidth, rh));
         }
 
         double lastLabelBottom = double.NegativeInfinity;
@@ -196,6 +195,25 @@ public sealed class FlashMap : FrameworkElement
     }
 
     private static double Snap(double value) => Math.Round(value) + 0.5;
+
+    /// <summary>
+    /// Gedeckte Töne je Art des Bereichs — hell genug zum Unterscheiden, dunkel
+    /// genug, damit die benannten Sektoren davor stehen bleiben.
+    /// </summary>
+    private static Brush RegionBrush(RegionKind kind) => kind switch
+    {
+        RegionKind.Code => Frozen(0x33, 0x44, 0x58),
+        RegionKind.NvmData => Frozen(0x4C, 0x42, 0x33),
+        RegionKind.Opaque => Frozen(0x3A, 0x45, 0x52),
+        _ => Frozen(0x30, 0x37, 0x3F)
+    };
+
+    private static Brush Frozen(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
 
     // ------------------------------------------------------------------
     // Interaktion: Band überfahren oder anklicken

@@ -50,6 +50,38 @@ public static class TestDump
         return data;
     }
 
+    /// <summary>
+    /// Baut einen VOLVOECU-Codeblock: Magic, Start- und CRC-Adresse im Kopf,
+    /// Teilenummer bei 0x4F0 und gültige CRC32 über den <em>ganzen</em> Block.
+    /// </summary>
+    /// <param name="cpuStart">CPU-Adresse, an der der Block beginnt (z. B. 0x010000).</param>
+    public static byte[] VolvoEcu(long cpuStart, string partNumber, int totalLength)
+    {
+        if (partNumber.Length != FlashFormat.VersionStringLen)
+            throw new ArgumentException($"Teilenummer muss {FlashFormat.VersionStringLen} Zeichen haben.");
+        if (totalLength <= VolvoEcuBlock.HeaderLength + FlashFormat.CrcTrailerLen)
+            throw new ArgumentException("Block zu kurz.");
+
+        var data = new byte[totalLength];
+        VolvoEcuBlock.Magic.CopyTo(data, 0);
+
+        // Der Code beginnt 0x400 hinter dem Kopf, der Trailer steht am Blockende.
+        WriteBe(data, VolvoEcuBlock.CodeStartOffset, (uint)(cpuStart + VolvoEcuBlock.HeaderLength));
+        WriteBe(data, VolvoEcuBlock.CrcAddressOffset,
+                (uint)(cpuStart + totalLength - FlashFormat.CrcTrailerLen));
+
+        Encoding.ASCII.GetBytes(partNumber).CopyTo(data, VolvoEcuBlock.PartNumberOffset);
+
+        // Codefüllung, ohne die schon gesetzte Teilenummer zu überschreiben.
+        for (int i = VolvoEcuBlock.HeaderLength; i < totalLength - FlashFormat.CrcTrailerLen; i++)
+            if (data[i] == 0) data[i] = (byte)(0x30 + i % 7);
+
+        uint crc = Crc32.Compute(data.AsSpan(0, totalLength - FlashFormat.CrcTrailerLen));
+        WriteBe(data, totalLength - FlashFormat.CrcTrailerLen, crc);
+
+        return data;
+    }
+
     /// <summary>Legt einen Sektor an einer Adresse in einem leeren (0xFF) Abbild ab.</summary>
     public static byte[] Image(long imageSize, params (long Start, byte[] Bytes)[] sectors)
     {
