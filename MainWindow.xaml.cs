@@ -205,12 +205,23 @@ public partial class MainWindow : Window
         VinText.Text = identity.VehicleNumber ?? identity.EcuType ?? "Steuergerät nicht benannt";
 
         VehicleMetaText.Text = string.Join("   ·   ",
-            identity.Hits.Where(h => h.Kind is "Hardware" or "Software" or "Teilenummer")
+            identity.Hits.Where(h => h.Kind is "Hardware" or "Software" or "Teilenummer"
+                                            or "VAG-Software" or "Softwarestand" or "VAG-Hardware")
                          .Select(h => $"{h.Kind} {h.Value} bei {Hex.Addr(h.Offset)}"));
         VehicleMetaText.Visibility = VehicleMetaText.Text.Length > 0
             ? Visibility.Visible : Visibility.Collapsed;
 
         var parts = new List<string>();
+
+        // Teilenummer und Stand zusammen, wie sie auf dem Steuergerät stehen —
+        // das ist die Angabe, nach der ein Diagnosetester fragt.
+        if (identity.Vag is { } vag)
+        {
+            parts.Add(vag.SoftwareText);
+            if (vag.EngineText is { } engine) parts.Add(engine);
+            if (vag.EngineCodes.Count > 0) parts.Add($"MKB {vag.EngineCodeText}");
+        }
+
         if (VagEcuCatalog.Find(identity.EcuType) is { } entry)
             parts.Add(entry.Display + " (Angabe aus der Steuergerätetabelle)");
         if (_dump?.Chain.Variant is { } variant)

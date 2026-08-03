@@ -677,11 +677,42 @@ PMU0, dann nach PMU1 und in den externen Flash. Das Speichermodell — 2 MiB PMU
 Genau diese Karte baut `TriCoreDump.SampleMed17Image()` als synthetisches Abbild nach; sie ist
 die Positivkontrolle der Blockkette.
 
-### Zwei weitere lesbare Angaben
+### Weitere lesbare Angaben
 
 **Steuergerätevariante.** Im Dataset-Block (`0x60`) steht bei Blockversatz `+0x78` eine
 schrägstrichgetrennte Zeichenkette, z. B. `34/1/EDC17_C46/5/P643//C643X5L8///`. Das ist eine
 **feste Fundstelle** und damit deutlich belastbarer als freies Durchsuchen nach Zeichenketten.
+
+**VAG-Identifikationsfeld.** Ebenfalls im Dataset-Block steht die VAG-Sicht auf das Gerät:
+Teilenummern, Softwarestand, Motor — die Angaben, nach denen ein Diagnosetester fragt. Anker
+ist die Systemkennung `EV_…`; alle Felder liegen bei festem Versatz dazu und sind rechts mit
+Leerzeichen gefüllt:
+
+| Versatz | Breite | Feld | Beispiel |
+| --- | --- | --- | --- |
+| `-0x0C` | 12 | Hardware-Teilenummer | `04L907309L` |
+| `+0x00` | 14 | Systemkennung | `EV_ECM20TDI011` |
+| `+0x0E` | 13 | Software-Teilenummer | `04L906027BB` |
+| `+0x1B` | 6 | Index | `005001` |
+| `+0x22` | 13 | Software-Teilenummer, nochmals | gleicher Wert |
+| `+0x2F` | 4 | **Softwarestand** | `7155` |
+| `+0x33` | 22 | Freitext, meist leer | `MED 17.1.62` |
+| `+0x49` | 21 | Motorbezeichnung | `R4 2.0l TDI` |
+| `+0x5E` | 5×n | Motorkennbuchstaben | `DAZA`, `----` = Leerplatz |
+
+Eine **VAG-Teilenummer** hat die Form „drei Zeichen Fahrzeugkennung, Baugruppe, drei Ziffern,
+null bis zwei Buchstaben": `04L906027BB`, `03L906018B`, `7P0907401`. Die Baugruppe ist auf
+`906`, `907`, `910` und `997` eingegrenzt — darunter laufen Motorsteuergeräte. Genau diese
+Stelle trennt eine Teilenummer von einer gleich langen Bosch-Nummer wie `1037540589`.
+
+Der Fund gilt erst, wenn **jede** Prüfung zutrifft: Systemkennung in Form und Breite,
+Softwarestand aus genau vier Ziffern, Index aus sechs, beide Teilenummern im VAG-Schema — und
+die zwei Ablagen der Software-Teilenummer müssen übereinstimmen. Scheitert eine davon, gibt es
+keine Angabe statt einer erfundenen.
+
+An fünf Abbildern vermessen und in allen fünf bestätigt. Zwei davon lassen sich unabhängig
+gegenprüfen: Ihre Dateinamen (`…_04L906027BB_7155_…`, `…_04L906026GP_3021_…`) nennen
+Teilenummer und Stand, und beides deckt sich mit dem, was aus dem Abbild gelesen wird.
 
 **CVN** (Calibration Verification Number). Eine CRC32 über mehrere Speicherbereiche, deren Lage
 aus einer Konfigurationsstruktur im Abbild gelesen wird. Sie wird **gelesen und ausgewiesen** —

@@ -61,12 +61,27 @@ public class BoschIdentityTests
     }
 
     [Fact]
-    public void UnknownPartNumberPrefix_IsNotReported()
+    public void PartNumberWithWrongAssemblyGroup_IsNotReported()
     {
-        // Die Präfixliste ist bewusst kurz: lieber eine Kennung zu wenig als
-        // eine erfundene.
-        var identity = BoschIdentity.Scan(WithText((0x1000, "1037529914 09Z906022AG")))!;
+        // Die Baugruppe muss 906, 907, 910 oder 997 sein — darunter laufen
+        // Motorsteuergeräte. 905 ist etwas anderes und wird nicht gemeldet:
+        // lieber eine Kennung zu wenig als eine erfundene.
+        //
+        // Diese Regel hat eine Präfixliste abgelöst, die zwar kurz, aber
+        // beweisbar zu eng war: Sie kannte 8V0, 298, 4M0 und 7P0 nicht und
+        // verschwieg damit vier von acht Teilenummern echter Abbilder.
+        var identity = BoschIdentity.Scan(WithText((0x1000, "1037529914 03L905022AG")))!;
         Assert.DoesNotContain(identity.Hits, h => h.Kind == "Teilenummer");
+    }
+
+    [Fact]
+    public void PartNumberWithUnlistedVehicleCode_IsReported()
+    {
+        // 8V0 stand auf keiner Präfixliste, ist aber die Teilenummer eines
+        // ausgewerteten Abbilds. Die Form entscheidet, nicht eine Aufzählung.
+        var identity = BoschIdentity.Scan(WithText((0x1000, "1037529914 8V0907404G")))!;
+        Assert.Equal("8V0907404G",
+                     Assert.Single(identity.Hits, h => h.Kind == "Teilenummer").Value);
     }
 
     [Fact]

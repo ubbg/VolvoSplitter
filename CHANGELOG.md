@@ -3,6 +3,38 @@
 Das Format folgt lose [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
+## Unveröffentlicht
+
+### VAG-Teilenummer und Softwarestand werden gelesen
+
+Von VAG-Abbildern liest das Werkzeug jetzt auch die Angaben, die auf dem Steuergerät stehen und
+die ein Diagnosetester meldet: Teilenummern, **Softwarestand**, Systemkennung, Motorbezeichnung
+und Motorkennbuchstaben.
+
+Sie stehen im Dataset-Block als Feld mit festen Breiten, verankert an der Systemkennung `EV_…`
+— dieselbe Art Beleg wie die Variantenkennung bei `+0x78`, kein Mustersuchen. Der Fund gilt
+erst, wenn jede Prüfung zutrifft; die schärfste ist der Softwarestand aus genau vier Ziffern,
+dazu kommt die Gegenprobe, dass die zweifach abgelegte Software-Teilenummer übereinstimmt.
+Scheitert eine Prüfung, gibt es keine Angabe statt einer erfundenen.
+
+Beim Audi-Abbild kommt so `04L906027BB 7155` heraus — genau die Werte, die auch im Dateinamen
+stehen. Diese Gegenprobe stammt nicht aus dem Abbild und ist deshalb unabhängig.
+
+### Teilenummern: Form statt Aufzählung
+
+Die freie Teilenummernsuche prüfte bisher gegen eine Liste von vierzehn Präfixen. Die Liste war
+beweisbar zu eng: Sie kannte `8V0`, `298`, `4M0` und `7P0` nicht und verschwieg damit vier von
+acht Teilenummern der ausgewerteten Abbilder. An ihre Stelle tritt das VAG-Namensschema — drei
+Zeichen Fahrzeugkennung, Baugruppe aus `906`/`907`/`910`/`997`, drei Ziffern, null bis zwei
+Buchstaben. Das ist zugleich schärfer (die Baugruppenstelle trennt Teilenummern von
+Bosch-Nummern) und offener (keine Aufzählung, die veraltet).
+
+Der Rückfall bleibt, überspringt aber Nummern, die das Identifikationsfeld schon gesichert
+geliefert hat — sonst stünde dieselbe Nummer zweimal im Bericht, einmal „gesichert" und einmal
+„stark gestützt".
+
+---
+
 ## v1.1.1
 
 ### ADD16 vollständig geklärt

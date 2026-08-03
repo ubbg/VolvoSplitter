@@ -40,20 +40,18 @@ public sealed partial record BoschIdentity(IReadOnlyList<IdentityHit> Hits)
 
     public string? VehicleNumber => Hits.FirstOrDefault(h => h.Kind == "VIN")?.Value;
 
+    /// <summary>
+    /// Das VAG-Identifikationsfeld aus dem Dataset-Block, falls vorhanden —
+    /// Teilenummern, Softwarestand, Motor. Null heißt: nicht gefunden, nicht
+    /// „keins vorhanden".
+    /// </summary>
+    public VagIdentBlock? Vag { get; init; }
+
     /// <summary>Kürzeste ASCII-Folge, die überhaupt betrachtet wird.</summary>
     private const int MinRunLength = 6;
 
     /// <summary>Abstand, innerhalb dessen eine Teilenummer neben einer Softwarenummer stehen muss.</summary>
     private const long PartNumberProximity = 0x400;
-
-    /// <summary>
-    /// Präfixe von VAG-Teilenummern für Motorsteuergeräte. Bewusst kurz: eine
-    /// Nummer, die nicht darauf beginnt, wird gar nicht gemeldet — lieber eine
-    /// Kennung zu wenig als eine erfundene.
-    /// </summary>
-    private static readonly string[] PartNumberPrefixes =
-        ["03G", "03L", "04E", "04L", "05L", "06H", "06J", "06K", "07K",
-         "1K0", "3C0", "4G0", "5Q0", "8K2"];
 
     /// <summary>Weltherstellercodes des VAG-Konzerns.</summary>
     private static readonly string[] VinPrefixes =
@@ -74,7 +72,11 @@ public sealed partial record BoschIdentity(IReadOnlyList<IdentityHit> Hits)
     [GeneratedRegex(@"(?<![A-Z])M(?:ED)?C?17(?:\.\d+)*(?![0-9])")]
     private static partial Regex PetrolEcu();
 
-    [GeneratedRegex(@"(?<![0-9A-Z])0[0-9A-Z]{2}\d{6}[A-Z]{0,2}(?![0-9A-Z])")]
+    /// <summary>
+    /// Suchform von <see cref="VagIdentBlock.IsPartNumber"/>: dieselbe Regel,
+    /// nur mit Wortgrenzen statt Anker, damit sie in einem ASCII-Lauf greift.
+    /// </summary>
+    [GeneratedRegex(@"(?<![0-9A-Z])[0-9A-Z]{3}(?:906|907|910|997)[0-9]{3}[A-Z]{0,2}(?![0-9A-Z])")]
     private static partial Regex PartNumber();
 
     [GeneratedRegex(@"(?<![A-HJ-NPR-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-HJ-NPR-Z0-9])")]
@@ -90,6 +92,11 @@ public sealed partial record BoschIdentity(IReadOnlyList<IdentityHit> Hits)
     {
         var runs = CollectRuns(data);
         var hits = new List<IdentityHit>();
+
+        // Feste Fundstelle zuerst: das VAG-Identifikationsfeld ist eine Struktur
+        // mit geprüften Feldgrenzen und gilt deshalb als gesichert.
+        var vag = VagIdentBlock.Find(data);
+        if (vag is not null) CollectVag(hits, vag);
 
         if (variant is not null)
         {
@@ -115,10 +122,36 @@ public sealed partial record BoschIdentity(IReadOnlyList<IdentityHit> Hits)
             CollectVin(hits, text, offset);
         }
 
-        CollectPartNumbers(hits, runs);
+        CollectPartNumbers(hits, runs, vag);
 
         var unique = Deduplicate(hits);
-        return unique.Count > 0 ? new BoschIdentity(unique) : null;
+        return unique.Count > 0 ? new BoschIdentity(unique) { Vag = vag } : null;
+    }
+
+    /// <summary>
+    /// Macht aus dem Identifikationsfeld Kennungen. Alle gelten als gesichert:
+    /// sie stammen aus einer Struktur, deren Feldgrenzen geprüft sind, nicht aus
+    /// einem Mustertreffer irgendwo im Abbild.
+    /// </summary>
+    private static void CollectVag(List<IdentityHit> into, VagIdentBlock vag)
+    {
+        void Add(string kind, string? value, int offset)
+        {
+            if (string.IsNullOrEmpty(value)) return;
+            into.Add(new IdentityHit(kind, value, vag.Offset + offset)
+            {
+                Confidence = RegionConfidence.Confirmed
+            });
+        }
+
+        Add("VAG-Software", vag.SoftwarePartNumber, VagIdentBlock.SoftwareOffset);
+        Add("Softwarestand", vag.SoftwareLevel, VagIdentBlock.LevelOffset);
+        Add("VAG-Hardware", vag.HardwarePartNumber, VagIdentBlock.HardwareOffset);
+        Add("Systemkennung", vag.SystemName, 0);
+        Add("Motor", vag.EngineText, VagIdentBlock.EngineOffset);
+
+        if (vag.EngineCodes.Count > 0)
+            Add("Motorkennung", vag.EngineCodeText, VagIdentBlock.EngineCodesOffset);
     }
 
     /// <summary>
@@ -179,12 +212,18 @@ public sealed partial record BoschIdentity(IReadOnlyList<IdentityHit> Hits)
     }
 
     /// <summary>
-    /// Teilenummern nur, wenn drei Bedingungen zusammenkommen: strenge Form,
-    /// bekanntes Präfix <em>und</em> Nähe zu einer Software- oder
-    /// Hardwarenummer. Elf Ziffern allein sind keine VAG-Teilenummer.
+    /// Der Rückfall für Abbilder ohne lesbares Identifikationsfeld. Eine
+    /// Teilenummer gilt nur, wenn zwei Bedingungen zusammenkommen: die strenge
+    /// Form <em>und</em> Nähe zu einer Software- oder Hardwarenummer. Elf
+    /// Zeichen allein sind keine VAG-Teilenummer.
+    ///
+    /// Nummern, die <paramref name="vag"/> schon gesichert geliefert hat, werden
+    /// übersprungen — sonst stünde dieselbe Nummer zweimal im Bericht, einmal
+    /// „gesichert" und einmal „stark gestützt".
     /// </summary>
     private static void CollectPartNumbers(List<IdentityHit> into,
-                                           List<(string Text, long Offset)> runs)
+                                           List<(string Text, long Offset)> runs,
+                                           VagIdentBlock? vag)
     {
         var anchors = into.Where(h => h.Kind is "Software" or "Hardware")
                           .Select(h => h.Offset)
@@ -194,7 +233,9 @@ public sealed partial record BoschIdentity(IReadOnlyList<IdentityHit> Hits)
         foreach (var (text, offset) in runs)
             foreach (Match match in PartNumber().Matches(text))
             {
-                if (!PartNumberPrefixes.Contains(match.Value[..3])) continue;
+                if (vag is not null &&
+                    (match.Value == vag.SoftwarePartNumber || match.Value == vag.HardwarePartNumber))
+                    continue;
 
                 long at = offset + match.Index;
                 if (!anchors.Any(a => Math.Abs(a - at) <= PartNumberProximity)) continue;

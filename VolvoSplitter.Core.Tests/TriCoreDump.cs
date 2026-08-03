@@ -33,6 +33,43 @@ public static class TriCoreDump
     }
 
     /// <summary>
+    /// Baut ein VAG-Identifikationsfeld, wie es im Dataset-Block steht. Zurück
+    /// kommt der ganze Bereich ab der Hardware-Teilenummer; der <c>EV_</c>-Anker
+    /// liegt darin bei <c>-VagIdentBlock.HardwareOffset</c>.
+    ///
+    /// Alle Felder werden auf ihre Sollbreite mit Leerzeichen aufgefüllt — genau
+    /// so liegen sie im Abbild.
+    /// </summary>
+    public static byte[] VagIdentField(string hardware, string system, string software,
+                                       string index, string level,
+                                       string? engine = null, params string[] engineCodes)
+    {
+        int anchor = -VagIdentBlock.HardwareOffset;
+        int length = anchor + VagIdentBlock.EngineCodesOffset +
+                     engineCodes.Length * VagIdentBlock.EngineCodeStride;
+
+        var field = new byte[length];
+        Array.Fill(field, (byte)' ');
+
+        void Put(int offset, string value) =>
+            Encoding.ASCII.GetBytes(value).CopyTo(field, anchor + offset);
+
+        Put(VagIdentBlock.HardwareOffset, hardware);
+        Put(0, system);
+        Put(VagIdentBlock.SoftwareFirstOffset, software);
+        Put(VagIdentBlock.IndexOffset, index);
+        Put(VagIdentBlock.SoftwareOffset, software);
+        Put(VagIdentBlock.LevelOffset, level);
+        if (engine is not null) Put(VagIdentBlock.EngineOffset, engine);
+
+        for (int i = 0; i < engineCodes.Length; i++)
+            Put(VagIdentBlock.EngineCodesOffset + i * VagIdentBlock.EngineCodeStride,
+                engineCodes[i]);
+
+        return field;
+    }
+
+    /// <summary>
     /// Codeähnliche Füllung mit eingestreuten TriCore-Zeigern. Der Zeigeranteil
     /// ist es, was <see cref="EcuDetector.PointerDensity"/> misst.
     /// </summary>
