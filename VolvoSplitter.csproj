@@ -22,4 +22,8 @@
     <ProjectReference Include="VolvoSplitter.Core\VolvoSplitter.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="dist\" />
+  </ItemGroup>
+
 </Project>
