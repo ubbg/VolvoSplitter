@@ -11,6 +11,13 @@ public enum SectorKind
     Parameter,
     Asw,
     Calibration,
+
+    /// <summary>Bosch-Blockkette: Startup Block oder Ramloader.</summary>
+    Bootloader,
+
+    /// <summary>Bosch-Blockkette: Dataset- oder Variant-Dataset-Block.</summary>
+    Dataset,
+
     Other
 }
 
@@ -38,6 +45,10 @@ public sealed record SectorSlot(SectorKind Kind, string Label, string Prefix, lo
 /// Das Abbild ist das rohe Flash ab 0x000000; im CPU-Adressraum liegt es ab 0x800000.
 /// Bei EMS2.4 können hinter diesen 8 MiB weitere physische Blöcke des MPC5777C
 /// angehängt sein — siehe <see cref="Mpc5777cLayout"/>.
+///
+/// <strong>Alles hier ist TRW-spezifisch.</strong> Für die TriCore-Abbilder der
+/// VAG-Steuergeräte gilt keine einzige dieser Konstanten; deren Aufbau steht in
+/// <c>TriCore.BoschBlockChain</c>.
 /// </summary>
 public static class FlashFormat
 {
@@ -70,25 +81,16 @@ public static class FlashFormat
     public const int VinOffset = 0x120;
     public const int VinLength = 17;
 
-    private static readonly SectorSlot[] Ems23Slots =
-    [
-        new(SectorKind.Parameter,   "Parameter",    "param_", 0x060000, 0x060000),
-        new(SectorKind.Asw,         "ASW",          "asw_",   0x100000, 0x100000),
-        new(SectorKind.Calibration, "Kalibrierung", "cal_",   0x380000, 0x380000)
-    ];
-
-    private static readonly SectorSlot[] Ems24Slots =
-    [
-        new(SectorKind.Asw,         "ASW",          "asw_",   0x200000, 0xA00000),
-        new(SectorKind.Calibration, "Kalibrierung", "cal_",   0x740000, 0xF40000),
-        new(SectorKind.Parameter,   "Parameter",    "param_", 0x7C0000, 0xFC0000)
-    ];
-
+    /// <summary>
+    /// Familie allein an der Dateigröße. Seit der TriCore-Unterstützung nur noch
+    /// <em>innerhalb</em> des TRW-Zweigs benutzt: welcher Hersteller vorliegt,
+    /// entscheidet <see cref="EcuDetector"/> an Belegen im Abbild, nie an der Größe.
+    /// </summary>
     public static EcuFamily DetectFamily(long imageSize) =>
         imageSize <= Ems23MaxSize ? EcuFamily.Ems23 : EcuFamily.Ems24;
 
     public static IReadOnlyList<SectorSlot> SlotsFor(EcuFamily family) =>
-        family == EcuFamily.Ems23 ? Ems23Slots : Ems24Slots;
+        EcuProfiles.ForFamily(family).Slots;
 
     /// <summary>
     /// Größe des Flash-Bereichs, den die Sektortabelle beschreibt — beim
@@ -98,13 +100,10 @@ public static class FlashFormat
     /// MPC5777C folgen vier gewöhnliche 64-KiB-Flash-Blöcke und der UTEST-Bereich.
     /// Welcher davon was enthält, sagt <see cref="Mpc5777cLayout"/>.
     /// </summary>
-    public static long FlashSizeFor(EcuFamily family) =>
-        family == EcuFamily.Ems23 ? 0x400000 : Mpc5777cLayout.LargeFlashSize;
+    public static long FlashSizeFor(EcuFamily family) => EcuProfiles.ForFamily(family).FlashSize;
 
-    public static string FamilyName(EcuFamily family) =>
-        family == EcuFamily.Ems23 ? "EMS2.3" : "EMS2.4";
+    public static string FamilyName(EcuFamily family) => EcuProfiles.ForFamily(family).FamilyName;
 
     /// <summary>Erwarteter Mikrocontroller — nur zur Anzeige.</summary>
-    public static string MicroName(EcuFamily family) =>
-        family == EcuFamily.Ems23 ? "MPC5674F" : "MPC5777C";
+    public static string MicroName(EcuFamily family) => EcuProfiles.ForFamily(family).MicroName;
 }
