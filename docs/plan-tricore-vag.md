@@ -63,8 +63,10 @@ Abbild nennen `0x8…`.
 ### B. Bosch-Blockkopf — verkettete Liste im Abbild
 
 Quelle: **`github.com/fanyi3315/bosch-med17-block-reader`** (JavaScript, ~130 Zeilen,
-erstellt 2019). Das Werkzeug liest einen MED17-Dump und läuft eine Blockkette ab. Aus dem
-Quelltext und der Beispielausgabe ergibt sich folgender Kopf, alles little-endian:
+erstellt 2019), vom Auftraggeber zur freien Nutzung freigegeben. Ausgewertet wurden der
+Quelltext **und die vollständige Beispielausgabe über alle acht Blöcke** eines
+8-MiB-MED17-Abbilds. Daraus ergibt sich folgender Kopf, alles little-endian,
+Gesamtlänge **fest 0x30 Byte**:
 
 | Versatz | Breite | Feld | Anmerkung |
 | --- | --- | --- | --- |
@@ -77,8 +79,8 @@ Quelltext und der Beispielausgabe ergibt sich folgender Kopf, alles little-endia
 | +0x18 | u8 | `table1Size` | Anzahl Einträge |
 | +0x19 | u8 | `table2Size` | Anzahl Einträge |
 | +0x1A | 18 B | `identifier` | ASCII, z. B. `10SW008917` |
-| +0x2C | u32 | `numberOfChecksumStructures` | Anzahl der folgenden Prüfsummenstrukturen |
-| +0x30 | … | Prüfsummenstrukturen | **im Vorbild unausgewertet („TODO")** |
+| +0x2C | u32 | `numberOfChecksumStructures` | Anzahl der Prüfsummenstrukturen — **nur die Anzahl**, siehe unten |
+| +0x30 | | Ende des Kopfes | dahinter Blockinhalt |
 
 Blockarten laut jenem Werkzeug:
 
@@ -107,23 +109,96 @@ Das ist unabhängig von den Datenblättern **die Bestätigung** für PMU1 bei `0
 beim TC1797 — und der Beleg dafür, dass MED17.1-Geräte externen Flash über die EBU haben.
 Ein 8-MiB-MED17-Abbild ist also kein Fehler, sondern ein eigener Containerfall.
 
+#### Nachgerechnete Invarianten — die Prüfregeln des Parsers
+
+Die Beispielausgabe enthält alle acht Blöcke vollständig. Damit lassen sich die Regeln
+**nachrechnen** statt annehmen. Zwei gehen 8 von 8 mal exakt auf:
+
+**(I1) `blockEnd == blockStart + size - 4`** — ohne eine einzige Abweichung:
+
+| # | Art | `blockStart` | `size` | `+size` | `blockEnd` | Δ |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Startup | 80018000 | 7f00 | 8001ff00 | 8001fefc | 4 |
+| 2 | Tuning protection | 80014000 | 3f00 | 80017f00 | 80017efc | 4 |
+| 3 | Cust. tuning prot. | 80010000 | 2000 | 80012000 | 80011ffc | 4 |
+| 4 | Customer | 80000000 | fd04 | 8000fd04 | 8000fd00 | 4 |
+| 5 | ASW #0 | 80020000 | 1e0000 | 80200000 | 801ffffc | 4 |
+| 6 | ASW #1 | 80800000 | 200000 | 80a00000 | 809ffffc | 4 |
+| 7 | ASW #2 | 84100000 | 280000 | 84380000 | 8437fffc | 4 |
+| 8 | Dataset #0 | 84002000 | fe000 | 84100000 | 840ffffc | 4 |
+
+`blockEnd` zeigt also auf das **letzte Wort**, nicht hinter das Blockende. Das ist die
+schärfste einzelne Prüfregel, die sich aus dem Material gewinnen lässt.
+
+**(I2) `table1Pointer` und `table2Pointer` liegen im eigenen Block** — bei allen sechs
+Blöcken, die überhaupt Tabellen haben. Blöcke ohne Tabellen tragen Zeiger `0` und Anzahl `0`.
+
+**(I3) Kettenende ist `nextSector == 0`** — Block 8 beendet die Kette so, keine
+Sonderbehandlung nötig.
+
+**(I4) `identifier` sind 18 Byte: ASCII, mit `0xFF` aufgefüllt.** Er gruppiert die Blöcke
+zu Softwareeinheiten — im Beispiel `10SW008917` (Blöcke 1–4), `10SW026798` (5–7),
+`10SW028601` (8). Die Form `\d{2}SW\d{6}` ist damit belegt und gehört in den Kennungsleser.
+
+**(I5) Blockgrößen sind nicht sektorbündig.** Block 4 ist `0xFD04` groß. Eine Prüfung auf
+Sektorausrichtung wäre falsch.
+
+**(I6) Die Blöcke überlappen sich nicht** und decken den Flash bis auf sechs kleine Lücken
+ab (764 B, 2 × 256 B, 8 KiB in PMU0; 8 KiB und 512 KiB im externen Flash). Der Parser
+meldet Lücken, behauptet aber nichts über ihren Inhalt.
+
+Die Blockkarte des Beispiels — zugleich die Vorlage für das synthetische Testabbild:
+
+```
+Block                 CPU-Bereich          Datei-Offset     Bank     Größe
+4 Customer            80000000-8000fd04    000000-00fd04    PMU0        64.772 B
+3 Cust. tuning prot.  80010000-80012000    010000-012000    PMU0         8.192 B
+2 Tuning protection   80014000-80017f00    014000-017f00    PMU0        16.128 B
+1 Startup             80018000-8001ff00    018000-01ff00    PMU0        32.512 B
+5 ASW #0              80020000-80200000    020000-200000    PMU0     1.966.080 B
+6 ASW #1              80800000-80a00000    200000-400000    PMU1     2.097.152 B
+8 Dataset #0          84002000-84100000    402000-500000    Extern   1.040.384 B
+7 ASW #2              84100000-84380000    500000-780000    Extern   2.621.440 B
+```
+
+Das Abbild ist damit ein **TC1797** (2 MiB PMU0 + 2 MiB PMU1) mit 4 MiB externem Flash —
+unabhängig von den Datenblättern die Bestätigung für PMU1 bei `0x…800000`.
+
+#### Zwei Fallen im Vorbild, die nicht mitgenommen werden
+
+**(F1) Zeigertabellen sind keine Adresstabellen.** Ihre Einträge sind gemischt: PFLASH
+(`80141f04`), externer Flash (`808084ac`), **LDRAM `0xC0000000`** (`c0000070`, `c0000280`),
+Wächterwerte `0` und `ffffffff` — und schlichte Zahlen ohne Adresscharakter (`f7c`). Die
+Tabellen werden roh ausgegeben, **ohne Deutung**, und kein Eintrag wird als Adresse geprüft.
+
+**(F2) Das Vorbild löst Zeiger gegen die falsche Bank auf.** `readTable` bekommt den
+`pmuName` des *Blocks* und zieht davon die Basis ab. Block 5 liegt in PMU0, seine Tabelle
+enthält aber `808084ac` (PMU1) — `0x808084ac − 0x80000000 = 0x8084ac` liegt jenseits des
+2-MiB-Puffers. Die C#-Umsetzung löst **jeden** Zeiger über `PhysicalLayout.ToFile` global
+auf, nie relativ zur Bank des Blocks.
+
+Dazu die bekannten Schnittgrenzen des Vorbilds: `slice(0, 0x3FFFFC)`, `0x1FFFFF`,
+`0x7FFFFB` schneiden ein bis vier Byte ab, wodurch Block 5 um ein Byte gekürzt extrahiert
+wird. Wird nicht übernommen.
+
 #### Einordnung dieser Quelle — ausdrücklich
 
-- **Kein Herstellerdokument.** Community-Reverse-Engineering, 21 Sterne, 3 Commits,
-  an *einem* Abbild entwickelt. Die Blockarten-Tabelle ist eine Deutung.
-- **Kein Lizenztext im Repository.** Der Quelltext darf deshalb **nicht** übernommen,
-  übersetzt oder abgeleitet werden. Übernommen wird ausschließlich die *Beschreibung eines
-  fremden Binärformats* — Tatsachen über einen Dateiaufbau, keine Schöpfungshöhe. Die
-  C#-Umsetzung wird eigenständig geschrieben, die Quelle im Kommentar und im README
-  genannt.
-- **Der Quelltext ist an mehreren Stellen unsauber** (`slice(0, 0x3FFFFC)`, `0x1FFFFF`,
-  `0x7FFFFB` — Abschneider um ein bis vier Byte). Diese Fehler werden **nicht**
-  mitgenommen.
+- **Nutzung ist freigegeben.** Der Auftraggeber hat die freie Nutzung erklärt. Das
+  Repository selbst trägt keinen Lizenztext; die Quelle wird deshalb in Quelltextkommentar
+  und README genannt — als Herkunftsnachweis, nicht als Lizenzbedingung.
+- **Kein Herstellerdokument.** Community-Reverse-Engineering, an *einem* Abbild
+  entwickelt. Die Blockarten-Tabelle ist eine Deutung, keine Bosch-Angabe.
 - **Nur MED17 belegt.** Ob EDC17 denselben Kopf trägt, ist plausibel (gleiche
-  Bosch-Softwarearchitektur), aber unbelegt. Der Parser muss das an der Struktur selbst
-  prüfen, nicht am Steuergerätetyp voraussetzen.
-- **Prüfsummenstrukturen sind unerforscht.** Der Zähler bei +0x2C wird gelesen und
-  gemeldet; der Inhalt dahinter bleibt zunächst ein opaker Bereich. Keine Behauptung.
+  Bosch-Softwarearchitektur), aber unbelegt. Der Parser prüft das an der Struktur selbst
+  über I1–I3, statt es am Steuergerätetyp vorauszusetzen.
+- **Ein Flagbit ist unerklärt.** Block 2 trägt `0x00800020` statt `0x20` — bei genau einem
+  von acht Blöcken ist Bit `0x00800000` gesetzt. Die Blockart ist das untere Byte; das Bit
+  wird gemeldet, seine Bedeutung nicht behauptet.
+- **Prüfsummenstrukturen: nur die Anzahl ist bekannt.** Lage und Größe lassen sich aus dem
+  Beispiel *nicht* ableiten. Rechnet man den Abstand zwischen Kopfende (+0x30) und der
+  ersten Tabelle je Block auf die Strukturanzahl um, ergibt das 40, 236, 34 und 165⅓ Byte
+  je Struktur — kein Muster. Also: Zähler melden, Rest unangetastet lassen. Keine
+  Behauptung, kein geratenes Format.
 
 **Das ändert die Ausrichtung des Vorhabens.** Statt Blockgrenzen aus Entropie zu *raten*,
 wird eine Struktur *gelesen und geprüft*. Die Entropieanalyse bleibt, rutscht aber vom
@@ -407,21 +482,37 @@ Kopf, werden alle Löschsektorgrenzen aus `PhysicalLayout.EraseSectors` durchpro
 das kostet bei TC1797 32 Prüfungen und macht den Parser unabhängig von der einen
 Adresse, an der jenes Werkzeug zufällig ansetzte.
 
-**Prüfung eines Kopfes** — erst wenn *alle* zutreffen, gilt er als gültig:
+**Prüfung eines Kopfes** — erst wenn *alle* zutreffen, gilt er als gültig. Die Regeln
+stammen aus §B und sind dort an acht Blöcken nachgerechnet:
 
 1. Unteres Byte von Wort 0 steht in der Blockarten-Tabelle.
-2. `Size` liegt zwischen 0x1000 und der Gesamtflashgröße.
-3. `CpuStart + Size` stimmt mit `blockEnd` überein (die Beispielausgabe stützt das; falls
-   sich an echten Abbildern ein anderer Bezug zeigt, wird die Regel dort nachgezogen —
-   und zwar gemessen, nicht geraten).
-4. `Table1Cpu`/`Table2Cpu` bilden über `PhysicalLayout.ToFile` in eine bekannte Bank ab,
-   sofern die zugehörige Anzahl > 0 ist.
-5. `Identifier` besteht aus druckbarem ASCII oder Füllbytes.
-6. `NextCpu` bildet in eine bekannte Bank ab **und** trägt dort selbst einen gültigen Kopf.
+2. `Size` liegt zwischen 0x1000 und der Gesamtflashgröße; **keine** Prüfung auf
+   Sektorausrichtung (I5).
+3. **`blockEnd == blockStart + size - 4`** — exakt, ohne Toleranz (I1). Das ist die
+   tragende Regel; sie allein schließt zufällige Bytefolgen praktisch aus.
+4. `Table1Cpu`/`Table2Cpu` liegen **innerhalb des eigenen Blocks** (I2), sofern die
+   zugehörige Anzahl > 0 ist; andernfalls sind Zeiger und Anzahl beide `0`.
+5. `Identifier` besteht aus druckbarem ASCII, mit `0xFF` aufgefüllt (I4).
+6. `NextCpu` ist `0` (Kettenende, I3) **oder** bildet über `PhysicalLayout.ToFile` in eine
+   bekannte Bank ab und trägt dort selbst einen gültigen Kopf.
+
+Regel 3 ist der Grund, warum die Kette `Status = Verified` rechtfertigt: eine Bytefolge,
+die zufällig eine bekannte Blockart, eine plausible Größe **und** die exakte
+`start + size - 4`-Beziehung erfüllt, und deren `nextSector` wiederum auf so eine Folge
+zeigt, ist kein Zufall.
+
+**Zeigerauflösung.** Jeder Zeiger — `nextSector`, `table1Pointer`, `table2Pointer` — wird
+über `PhysicalLayout.ToFile` **global** aufgelöst, nie relativ zur Bank des Blocks. Siehe
+F2 in §B: die Tabellen eines PMU0-Blocks enthalten nachweislich PMU1-Adressen.
+
+**Tabelleninhalte** werden roh übernommen und ungedeutet ausgegeben (F1) — sie enthalten
+Flash-, Extern- und LDRAM-Adressen, Wächterwerte und schlichte Zahlen nebeneinander.
 
 **Kettenlauf.** Höchstens 64 Schritte, besuchte Adressen in einem `HashSet` — eine
-zyklische oder überlange Kette bricht ab und wird als solche gemeldet. Der letzte Block
-einer Kette hat kein gültiges `NextCpu`; das ist das reguläre Ende, kein Fehler.
+zyklische oder überlange Kette bricht ab und wird als solche gemeldet.
+
+**Lückenbericht.** Nach dem Kettenlauf werden die von keinem Block belegten Bereiche
+aufgeführt (im Beispiel sechs, von 256 B bis 512 KiB) — als Beobachtung, ohne Deutung.
 
 **Ergebnis.**
 - Jeder **geprüfte** Block wird ein `SectorInfo` mit `Kind` aus der Blockart, `Label` aus
@@ -430,11 +521,11 @@ einer Kette hat kein gültiges `NextCpu`; das ist das reguläre Ende, kein Fehle
   schreibt bereits 32-Bit-S3-Adressen, `0x80000000` passt ohne Änderung.
 - Blöcke, deren Kopf nur teilweise aufgeht, erscheinen **nicht** als Sektor, sondern als
   Beleg in `Detection.Evidence` („Blockkopfkandidat bei 0x… nicht bestätigt").
-- Die `numberOfChecksumStructures` folgenden Bytes werden als `FlashRegion` mit
-  `RegionKind.Opaque`, `Confidence.Unknown` und dem Titel „Prüfsummenstrukturen
-  (Aufbau unbekannt)" ausgewiesen. **Keine Behauptung über ihren Inhalt.**
-- `Table1`/`Table2` werden als Zeigerlisten im Bericht ausgegeben, ohne Deutung ihrer
-  Bedeutung.
+- `numberOfChecksumStructures` wird als **Zahl** im Bericht ausgewiesen. Lage und Größe der
+  Strukturen sind aus dem Material nicht ableitbar (§B) — es wird kein Bereich dafür
+  markiert und nichts über ihren Inhalt behauptet.
+- `Table1`/`Table2` werden als Wortlisten im Bericht ausgegeben, ohne Deutung.
+- Ein gesetztes Flagbit in den oberen Bytes von Wort 0 wird mit ausgegeben, ohne Deutung.
 
 `SectorKind` bekommt die Werte `Bootloader` und `Dataset`. Geprüft: kein `switch`-Ausdruck
 im Core ist über `SectorKind` erschöpfend, das Hinzufügen ist gefahrlos.
@@ -546,33 +637,45 @@ Neu `VolvoSplitter.Core.Tests/TriCoreDump.cs`:
 public static byte[] Pflash(long size, params (long Start, byte[] Bytes)[] parts);
 public static byte[] CodeBlock(int length, long cpuBase, int pointerEvery = 64);
 public static byte[] CalibrationBlock(int length);      // monotone u16le-Achsen, Entropie ≈ 4
-public static byte[] BoschBlockHeader(byte id, long cpuStart, long size, long? nextCpu,
-                                      string identifier, uint[]? table1, uint[]? table2);
+// setzt blockEnd = cpuStart + size - 4 (I1) und legt die Tabellen im Block ab (I2)
+public static byte[] BoschBlockHeader(byte id, long cpuStart, long size, long nextCpu,
+                                      string identifier, uint[]? table1, uint[]? table2,
+                                      int checksumStructureCount, uint flags = 0);
 public static byte[] BlockChain(TriCoreDevice device, params (byte Id, long Cpu, long Size)[] chain);
 public static byte[] Tc1797Container(byte[] pmu0, byte[] pmu1, byte[]? external = null);
+/// Die Blockkarte aus §B als fertiges 8-MiB-Abbild — Grundlage der Positivkontrolle.
+public static byte[] SampleMed17Image();
 ```
 
 Zusicherungen, in der Handschrift von `OpaqueRegion_DoesNotClaimEncryptionAsFact`:
 
 1. `Tc1796SectorMap_AccountsForEveryByte` / `Tc1797SectorMap_AccountsForEveryByte` — je Bank exakt 2 MiB.
-2. `BlockChain_WalksAllLinkedBlocks` — Positivkontrolle: achtgliedrige Kette über PMU0/PMU1/Extern wird vollständig gelesen, alle `Verified`.
-3. `BrokenChainLink_StopsWalkWithoutClaimingBlocks` — zeigt `nextSector` ins Leere, endet die Kette dort; kein erfundener Block.
-4. `CyclicChain_TerminatesAndIsReported` — Zyklus bricht ab und wird als Beleg gemeldet.
-5. `InvalidBlockHeader_DoesNotBecomeASector` — kopfförmige Bytes mit unbekannter Blockart oder unplausibler Größe → kein `SectorInfo`.
-6. `ChecksumStructures_AreReportedAsUnknown` — der Bereich hinter dem Zähler ist `Opaque`/`Unknown`, die Beschreibung behauptet nichts über seinen Inhalt.
-7. `TriCoreImage_WithoutChain_ClaimsNoVerifiedBlocks` — plausibler Code und Kennfelder, aber keine Kette → **kein** `SectorStatus.Verified`.
-8. `CalibrationCandidate_IsNotCalledCalibration` — `Kind == RegionKind.Data`, `Confidence != Confirmed`, Beschreibung enthält „Kandidat", nicht „Kalibrierungssektor".
-9. `TwoMegabyteImage_WithoutEcuString_DoesNotPickASingleMcu` — Mehrdeutigkeit TC1796 / TC1797-PMU0 wird gemeldet, nicht aufgelöst.
-10. `EcuTypeString_SelectsTheMatchingMcu` — `EDC17CP44` führt zur TC1797-Karte.
-11. `UnknownTriCoreDevice_ClaimsNoSectorMap` — `Generic`, `Complete == false`, `EraseSectors` leer, `SourceNote` sagt es.
-12. `TriCoreDflashTail_IsNotAutomaticallyEeprom` — direkte Entsprechung zu `RegionBeyondLargeFlash_IsNotAutomaticallyEeprom`.
-13. `DflashOnlyFile_IsNotMistakenForPflash` — 0x20000-Datei ohne Zeigerdichte → `Unknown`.
-14. `CachedAndUncachedAddresses_MapToTheSameOffset` — `0x80020000` und `0xA0020000` ergeben denselben Datei-Offset.
-15. `BoschIdentity_ReportsOffsets_NotJustValues`.
-16. `VagPartNumberCandidate_RequiresStrictShape` — beliebige 11 Ziffern werden nicht als VAG-Teilenummer gemeldet.
-17. `Detection_IsAmbiguous_WhenBothFamiliesScoreClose`.
-18. `TriCoreProfile_DoesNotOfferWriteBack` — `SupportsWriteBack == false`, `Save`/`RepairCrc`/`ReplaceSector` verweigern.
-19. `EmsImage_StillDetectedAfterTriCoreSupport` — Regression gegen Erkennungsschäden.
+2. `BlockChain_WalksTheSampleLayout` — Positivkontrolle mit **genau der Blockkarte aus §B**: acht Blöcke über PMU0/PMU1/Extern, alle `Verified`, Reihenfolge und Größen wie dort.
+3. `BlockEnd_MustBeStartPlusSizeMinusFour` — ein Kopf mit `blockEnd == start + size` (statt `− 4`) wird **verworfen**. Das schützt die tragende Regel I1 gegen unbemerktes Aufweichen.
+4. `TablePointerOutsideOwnBlock_RejectsHeader` — Regel I2.
+5. `NextSectorZero_EndsChainCleanly` — Regel I3, kein Fehlerzustand.
+6. `BrokenChainLink_StopsWalkWithoutClaimingBlocks` — `nextSector` zeigt ins Leere; kein erfundener Block.
+7. `CyclicChain_TerminatesAndIsReported`.
+8. `UnalignedBlockSize_IsAccepted` — Größe `0xFD04` wie Block 4; keine Sektorbündigkeitsprüfung (I5).
+9. `TableEntriesAreNotValidatedAsAddresses` — eine Tabelle mit `0xC0000070`, `0`, `0xFFFFFFFF` und `0xF7C` wird unverändert übernommen (F1).
+10. `TablePointerIntoOtherBank_ResolvesGlobally` — ein PMU0-Block mit `0x808084AC` in der Tabelle liest aus PMU1, nicht ins Leere (F2).
+11. `ChecksumStructureCount_IsReportedWithoutRegion` — der Zähler erscheint im Bericht, es entsteht **kein** markierter Bereich und keine Aussage über den Inhalt.
+12. `BlockGaps_AreReportedWithoutInterpretation` — die sechs Lücken der Beispielkarte tauchen als Beobachtung auf, ohne Deutung.
+13. `Identifier_IsAsciiPaddedWithFF` — 18 Byte, `10SW008917` + `0xFF`-Füllung; die Form `\d{2}SW\d{6}` wird erkannt (I4).
+14. `BlocksAreGroupedBySoftwareUnit` — die drei Kennungen des Beispiels gruppieren die acht Blöcke wie dort.
+15. `TriCoreImage_WithoutChain_ClaimsNoVerifiedBlocks` — plausibler Code und Kennfelder, aber keine Kette → **kein** `SectorStatus.Verified`.
+16. `CalibrationCandidate_IsNotCalledCalibration` — `Kind == RegionKind.Data`, `Confidence != Confirmed`, Beschreibung enthält „Kandidat", nicht „Kalibrierungssektor".
+17. `TwoMegabyteImage_WithoutEcuString_DoesNotPickASingleMcu` — Mehrdeutigkeit TC1796 / TC1797-PMU0 wird gemeldet, nicht aufgelöst.
+18. `EcuTypeString_SelectsTheMatchingMcu` — `EDC17CP44` führt zur TC1797-Karte.
+19. `UnknownTriCoreDevice_ClaimsNoSectorMap` — `Generic`, `Complete == false`, `EraseSectors` leer, `SourceNote` sagt es.
+20. `TriCoreDflashTail_IsNotAutomaticallyEeprom` — direkte Entsprechung zu `RegionBeyondLargeFlash_IsNotAutomaticallyEeprom`.
+21. `DflashOnlyFile_IsNotMistakenForPflash` — 0x20000-Datei ohne Zeigerdichte → `Unknown`.
+22. `CachedAndUncachedAddresses_MapToTheSameOffset` — `0x80020000` und `0xA0020000` ergeben denselben Datei-Offset.
+23. `BoschIdentity_ReportsOffsets_NotJustValues`.
+24. `VagPartNumberCandidate_RequiresStrictShape` — beliebige 11 Ziffern werden nicht als VAG-Teilenummer gemeldet.
+25. `Detection_IsAmbiguous_WhenBothFamiliesScoreClose`.
+26. `TriCoreProfile_DoesNotOfferWriteBack` — `SupportsWriteBack == false`, `Save`/`RepairCrc`/`ReplaceSector` verweigern.
+27. `EmsImage_StillDetectedAfterTriCoreSupport` — Regression gegen Erkennungsschäden.
 
 **Echte Abbilder:** die synthetischen Dateien prüfen die Mechanik, nicht die Trefferquote
 in der Wirklichkeit. Vor der Veröffentlichung von Phase 4 mindestens je ein echtes
@@ -592,7 +695,7 @@ enthalten eine VIN. Ein `fixtures/`-Ordner in `.gitignore` plus Tests, die bei A
 | `## Sektorformat` (Z. 229) | klarstellen, dass es das TRW-Format beschreibt und für TriCore nicht gilt |
 | `## Unterstützte Steuergeräte` (Z. 269) | Satz Z. 271 „Die Familie wird allein an der Dateigröße erkannt" stimmt nach Phase 2 nicht mehr — durch die Prüfkette ersetzen; Tabelle EDC17/MED17/ME17 → MCU aufnehmen, mit Kennzeichnung, welche Sektorkarte hinterlegt ist |
 | `## Physisches MPC5777C-Layout` (Z. 291) | zu „Physische Layouts" verallgemeinern, TC1796-/TC1797-Karten daneben |
-| **neu** `## Bosch-Blockkette` | die Kopfstruktur aus §B, mit **Quellenangabe** auf `fanyi3315/bosch-med17-block-reader` und dem ausdrücklichen Hinweis, dass es Community-Reverse-Engineering ohne Lizenztext ist, dessen *Code* nicht übernommen wurde |
+| **neu** `## Bosch-Blockkette` | die Kopfstruktur aus §B samt der nachgerechneten Invarianten I1–I6 und der Beispiel-Blockkarte; **Quellenangabe** auf `fanyi3315/bosch-med17-block-reader` mit dem Hinweis, dass es Community-Reverse-Engineering an einem einzelnen Abbild ist |
 | `### Was das Werkzeug bewusst nicht behauptet` (Z. 359) | erweitern: keine Blöcke ohne geprüfte Kette; keine Deutung der Prüfsummenstrukturen; keine geratene MCU bei 2 MiB; kein bestätigter Kalibrierbereich aus Entropie allein |
 | `## Referenzunterlagen` (Z. 507) | die beiden Infineon-Datenblätter mit Version und Link; das genannte GitHub-Repository als Formatquelle |
 
@@ -652,9 +755,9 @@ Das gehört in `CHANGELOG.md` und in den Befundtext.
 
 | Risiko | Gegenmaßnahme |
 | --- | --- |
-| Die Blockkopfstruktur stammt aus **einem** Abbild und einer unbelegten Quelle. Andere EDC17/MED17-Stände können abweichen. | Der Parser prüft die Struktur, statt sie vorauszusetzen; ohne gültige Kette gibt es keine Blöcke, nur Regionen. Das Werkzeug wird dadurch schlechter, nicht falsch. |
-| Das Vorbild-Repository hat **keinen Lizenztext**. | Kein Code wird übernommen, übersetzt oder abgeleitet. Eigenständige C#-Umsetzung anhand der Formatbeschreibung, Quelle in Kommentar und README genannt. |
-| Prüfsummenstrukturen sind unerforscht. | Werden gezählt und als opaker Bereich ausgewiesen. Keine Deutung, keine Korrektur. |
+| Die Blockkopfstruktur stammt aus **einem** Abbild. Andere EDC17/MED17-Stände können abweichen. | Der Parser prüft die Struktur über I1–I3, statt sie vorauszusetzen; ohne gültige Kette gibt es keine Blöcke, nur Regionen. Das Werkzeug wird dadurch schlechter, nicht falsch. |
+| Herkunft der Formatkenntnis. | Nutzung ist freigegeben; das Vorbild-Repository trägt selbst keinen Lizenztext. Quelle wird in Quelltextkommentar und README genannt. Die beiden Fehler des Vorbilds (bankrelative Zeigerauflösung, abschneidende Puffergrenzen) werden nicht mitgenommen. |
+| Prüfsummenstrukturen sind unerforscht — Lage und Größe aus dem Beispiel nicht ableitbar. | Nur der Zähler wird gemeldet. Kein Bereich markiert, keine Deutung, keine Korrektur. |
 | Mehrdeutigkeit bei 2 MiB (TC1796 gegen TC1797-PMU0). | Melden statt raten; auflösbar über Kennungsstring und Steuergerätetabelle. |
 | Falsch-positive Erkennung — ein EMS-Abbild enthält zufällig `0x80`-Muster. | TRW-Sonden punkten höher; die Zeigerdichte verlangt 4-Byte-Ausrichtung und eine Schwelle; bei knappem Vorsprung `Ambiguous` statt stiller Wahl. |
 | Regression im Volvo-Pfad durch die Umtypisierung von `Mpc5777cLayout`. | Phase 1 als reiner Umbau mit unveränderter Testmenge und genau einer geänderten Testzeile. |
