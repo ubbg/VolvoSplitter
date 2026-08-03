@@ -3,6 +3,92 @@
 Das Format folgt lose [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
+## Unveröffentlicht
+
+### VAG-Steuergeräte auf Infineon TriCore lesen
+
+Neben den Volvo/TRW-Abbildern liest das Werkzeug jetzt auch Abbilder von VAG-Steuergeräten auf
+Infineon TriCore — Bosch EDC17 (Diesel) und MED17/ME17 (Benzin). Little endian, ohne
+TRW-Sektorköpfe, ohne festen CRC-Trailer.
+
+**Umfang: nur lesen und zerlegen.** Für TriCore-Abbilder werden Prüfsummen gerechnet und
+gemeldet, aber nicht gestellt. Kein Schreiben, kein Prüfsummen-Korrigieren, kein Blockersatz.
+Das ist keine Lücke, sondern eine Festlegung: `EcuProfile.SupportsWriteBack` ist false, und
+`Save`, `RepairCrc`, `ReplaceSector` und `PatchUInt32Be` verweigern.
+
+* **Bosch-Blockkette** — die verkettete Blockstruktur wird mit zwei unabhängigen Verfahren
+  gelesen (Abtastung über das Abbild, Kettenlauf über `nextSector`); Übereinstimmung und
+  Abweichung werden beide gemeldet. Ein Kopf gilt erst als gültig, wenn `0xDEADBEEF` am
+  Blockende steht, `blockEnd == blockStart + size - 4` auf das Byte aufgeht, beide
+  Zeigertabellen im eigenen Block liegen und der Block ganz in einer Bank sitzt.
+* **Prüfsummen nachrechnen** — die drei Verfahren `SB_CRC32_ALGO_E`, `SB_ADD32_ALGO_E` und
+  `SB_ADD16_ALGO_E` werden gerechnet und gegen den Sollwert geprüft. Erst das rechtfertigt
+  `Verified`; ein Block mit gültigem Kopf und abweichender Prüfsumme wird `CrcMismatch`.
+* **Physische Karten** von TC1796 und TC1797 aus den Infineon-Datenblättern; beide Bänke
+  summieren sich auf exakt 2048 KiB. PMU0, PMU1, externer Flash am EBU und angehängter DFLASH
+  werden auf die Datei abgebildet, gecachte und ungecachte Adressen gleich behandelt.
+* **CVN und Variantenkennung** werden gelesen und ausgewiesen — die CVN nur, wenn ihre
+  Konfigurationsstruktur wirklich gefunden wird.
+* **Kennungen mit Fundort** — Hardware-, Software- und Blockkennungen, Steuergerätetyp und VIN,
+  jeweils in strenger Form. Ein Fundort ist ein Beleg, eine Zeichenkette allein nur eine
+  Beobachtung.
+
+### Erkennung statt Dateigröße
+
+Bis v1.0.0 entschied die Dateigröße über die Gerätefamilie. Das reicht nicht mehr — eine
+2-MiB-Datei kann ein EMS2.3-Abbild oder ein TC1796 sein. `EcuDetector` wiegt jetzt Belege
+gegeneinander und legt seine Belegliste offen. Die Größe entscheidet nie zwischen Herstellern;
+ein knapper Vorsprung heißt „nicht eindeutig“, zu wenig Belege heißen „unbekannt“.
+
+Widerspricht eine Steuergerätekennung dem Abbild, gewinnt das Abbild: die Steuergerätetabelle ist
+eine Nutzerangabe, die Bankgrenze im Abbild eine Messung.
+
+### Was ausdrücklich nicht behauptet wird
+
+* Ohne geprüfte Blockkette gibt es keine Blöcke, nur Bereiche mit Konfidenzangabe.
+* Ein Datenbereich, der zu Kennfeldern passt, heißt „Kalibrierungskandidat“ und behält die Art
+  `Daten` — ein eigener `RegionKind` wäre eine Behauptung im Typsystem.
+* Ein Anhang beliebiger Größe ist kein Datenflash, nur weil er hinten steht.
+* Bei 2 MiB ohne Steuergerätekennung wird kein Baustein gewählt: TC1796 und TC1797-PMU0 bilden
+  dieselben 2 MiB gleich ab.
+* Für sechs der acht TriCore-Bausteine ist keine Sektorkarte hinterlegt. Sie werden benannt, aber
+  nicht mit einer geratenen Karte gefüllt.
+* Ein unbekannter Prüfalgorithmus führt zu „nicht nachgerechnet“, nicht zu einem geratenen
+  Verfahren.
+
+### Grenzen dieser Ausgabe
+
+**Geprüft wurde gegen synthetische Abbilder, nicht gegen echte.** Im Repository liegen keine
+Steuergeräte-Abbilder, weder Volvo noch VAG. Die 126 Tests prüfen die Mechanik — die Blockkarte
+eines ausgewerteten MED17.1-Abbilds ist als synthetisches Abbild nachgebaut —, nicht die
+Trefferquote in der Wirklichkeit.
+
+Die Formatkenntnis stammt aus zwei Community-Werkzeugen, die im Blockkopf übereinstimmen, aber
+beide an *einem* Abbild entstanden sind. Es ist kein Herstellerdokument. Ob EDC17 denselben Kopf
+trägt wie MED17, ist plausibel, aber unbelegt — der Parser prüft es an der Struktur selbst, statt
+es vorauszusetzen. Andere Stände können abweichen; das Werkzeug wird dadurch schlechter, nicht
+falsch.
+
+Die Länge eines geprüften Bereichs (`csEnd - csStart + 4`) ist ein Analogieschluss zu `blockEnd`,
+nicht nachgerechnet.
+
+### Umbau
+
+* `PhysicalLayout` löst `Mpc5777cLayout` als Typ ab und bekommt mit `ToFile` die Rückrichtung,
+  mit `EraseSectors` die feine Sektorkarte und mit `SourceNote` eine Herkunftsangabe, die nicht
+  mehr fest im Anzeigetext steht.
+* `TrwContainer` nimmt das TRW-Sektorformat aus `FlashDump` auf; `EcuProfile` ersetzt die
+  Ternärausdrücke in `FlashFormat`; `ByteOrder`, `BinaryHeuristics` und `Hex` legen Wortzugriffe,
+  Messungen und Adressdarstellung frei.
+* Der Befund führt neue Abschnitte für Erkennung, Kennungen, Blockkette und Löschsektoren.
+* Kommandozeile: `--profile` übersteuert die Erkennung, `--list-profiles` zeigt die bekannten,
+  `.ori` wird als Endung mitgesucht.
+* Der nutzersichtbare Produktname heißt **Flash File Splitter**; Namensraum, Assembly- und
+  Repository-Name bleiben `VolvoSplitter`, damit veröffentlichte Verknüpfungen und Nutzerskripte
+  weiter funktionieren.
+
+---
+
 ## v1.0.0
 
 Erste Veröffentlichung.

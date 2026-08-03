@@ -37,7 +37,7 @@ public enum RegionConfidence
 public sealed record FlashRegion(long Start, long Length, RegionKind Kind, string Description, double Entropy)
 {
     public long End => Start + Length;
-    public string AddressRange => $"0x{Start:X6} – 0x{End:X6}";
+    public string AddressRange => Hex.Range(Start, End);
     public string SizeText => $"{Length:N0} B";
 
     /// <summary>Rekonstruierte CPU-Adresse, falls der Bereich einer Partition zuzuordnen ist.</summary>
@@ -52,7 +52,7 @@ public sealed record FlashRegion(long Start, long Length, RegionKind Kind, strin
     public RegionConfidence Confidence { get; init; } = RegionConfidence.Strong;
 
     public string? CpuAddressRange =>
-        CpuStart is { } cpu ? $"0x{cpu:X6} – 0x{cpu + Length:X6}" : null;
+        CpuStart is { } cpu ? Hex.Range(cpu, cpu + Length) : null;
 
     public string Label => Title ?? Kind switch
     {
@@ -90,17 +90,15 @@ public sealed record FlashRegion(long Start, long Length, RegionKind Kind, strin
 /// </summary>
 public static class RegionScanner
 {
-    private const int Page = 0x1000;
-
     /// <summary>Bereiche unter dieser Größe sind Rauschen und werden übergangen.</summary>
     private const long MinInteresting = 0x800;
 
     public static List<FlashRegion> Scan(byte[] data, long flashSize, IEnumerable<SectorInfo> sectors,
-                                         Mpc5777cLayout? layout = null)
+                                         PhysicalLayout? layout = null, EcuProfile? profile = null)
     {
         var all = sectors as IReadOnlyList<SectorInfo> ?? sectors.ToList();
 
-        var occupied = OccupiedRuns(data);
+        var occupied = BinaryHeuristics.OccupiedRuns(data);
         var claimed = all.Where(s => s.Present)
                          .Select(s => (s.Start, s.End))
                          .OrderBy(s => s.Start)
@@ -108,25 +106,25 @@ public static class RegionScanner
 
         var fragments = new List<(long From, long To)>();
         foreach (var (start, end) in occupied)
-            foreach (var (from, to) in Subtract(start, end, claimed))
+            foreach (var (from, to) in BinaryHeuristics.Subtract(start, end, claimed))
             {
                 // Das Seitenraster lässt hinter einem Sektor den Rest der
                 // letzten Seite übrig — reines 0xFF. Weg damit.
-                var (a, b) = TrimErased(data, from, to);
+                var (a, b) = BinaryHeuristics.TrimErased(data, from, to);
                 if (b > a) fragments.Add((a, b));
             }
 
         var regions = new List<FlashRegion>();
         foreach (var (from, to) in MergePerEepromBlock(fragments, claimed, layout))
             if (to - from >= MinInteresting)
-                regions.Add(Describe(data, from, to - from, flashSize, all, layout));
+                regions.Add(Describe(data, from, to - from, flashSize, all, layout, profile));
 
         return regions;
     }
 
     /// <summary>
-    /// In den Low/Mid-Blöcken ist der Inhalt ein logisches Ganzes: Kopf am
-    /// Blockanfang, angehängte Records dahinter, dazwischen und danach
+    /// In den Blöcken der EEPROM-Emulation ist der Inhalt ein logisches Ganzes:
+    /// Kopf am Blockanfang, angehängte Records dahinter, dazwischen und danach
     /// gelöschter Platz (NXP AN4868). Als einzelne Bruchstücke betrachtet
     /// wären Kopf und Records jeder für sich zu klein, um überhaupt gemeldet
     /// zu werden — der Block fiele stillschweigend unter den Tisch. Deshalb
@@ -134,7 +132,7 @@ public static class RegionScanner
     /// </summary>
     private static List<(long From, long To)> MergePerEepromBlock(
         List<(long From, long To)> fragments, List<(long Start, long End)> claimed,
-        Mpc5777cLayout? layout)
+        PhysicalLayout? layout)
     {
         if (layout is null) return fragments;
 
@@ -147,7 +145,7 @@ public static class RegionScanner
 
             // Nur echte EEPROM-Emulationsblöcke, und nur solange dort kein
             // Sektor liegt — sonst würde das Zusammenfassen ihn überspannen.
-            if (partition is not { Type: FlashBlockType.Low or FlashBlockType.Mid } ||
+            if (partition is not { EmulatedEeprom: true } ||
                 claimed.Any(c => c.Start < partition.FileEnd && c.End > partition.FileStart))
             {
                 result.Add(fragment);
@@ -165,64 +163,16 @@ public static class RegionScanner
         return result;
     }
 
-    /// <summary>Schneidet gelöschte Bytes an beiden Enden ab.</summary>
-    private static (long From, long To) TrimErased(byte[] data, long from, long to)
-    {
-        while (from < to && data[from] == 0xFF) from++;
-        while (to > from && data[to - 1] == 0xFF) to--;
-        return (from, to);
-    }
-
-    /// <summary>Zusammenhängende Bereiche, die nicht komplett auf 0xFF stehen.</summary>
-    private static List<(long Start, long End)> OccupiedRuns(byte[] data)
-    {
-        var runs = new List<(long, long)>();
-        long? current = null;
-
-        for (long page = 0; page < data.LongLength; page += Page)
-        {
-            int length = (int)Math.Min(Page, data.LongLength - page);
-            bool erased = IsErased(data, page, length);
-
-            if (!erased) current ??= page;
-            else if (current is { } start) { runs.Add((start, page)); current = null; }
-        }
-        if (current is { } last) runs.Add((last, data.LongLength));
-
-        return runs;
-    }
-
-    private static bool IsErased(byte[] data, long offset, int length)
-    {
-        for (int i = 0; i < length; i++)
-            if (data[offset + i] != 0xFF) return false;
-        return true;
-    }
-
-    /// <summary>Die Teile von [start,end), die von keinem Sektor belegt sind.</summary>
-    private static IEnumerable<(long From, long To)> Subtract(long start, long end,
-                                                              List<(long Start, long End)> claimed)
-    {
-        long cursor = start;
-        foreach (var (cs, ce) in claimed)
-        {
-            if (ce <= cursor || cs >= end) continue;
-            if (cs > cursor) yield return (cursor, Math.Min(cs, end));
-            cursor = Math.Max(cursor, ce);
-            if (cursor >= end) yield break;
-        }
-        if (cursor < end) yield return (cursor, end);
-    }
-
     // ------------------------------------------------------------------
     // Einordnung
     // ------------------------------------------------------------------
 
     private static FlashRegion Describe(byte[] data, long start, long length, long flashSize,
-                                        IReadOnlyList<SectorInfo> sectors, Mpc5777cLayout? layout)
+                                        IReadOnlyList<SectorInfo> sectors, PhysicalLayout? layout,
+                                        EcuProfile? profile)
     {
         var partition = layout?.PartitionAt(start);
-        var region = Classify(data, start, length, sectors, partition);
+        var region = Classify(data, start, length, sectors, partition, layout, profile);
 
         // Ohne Layout lässt sich über einen Anhang hinter dem Flash-Baustein
         // nichts Belastbares sagen — der Inhalt wird trotzdem eingeordnet.
@@ -241,26 +191,29 @@ public static class RegionScanner
     }
 
     private static FlashRegion Classify(byte[] data, long start, long length,
-                                        IReadOnlyList<SectorInfo> sectors, FlashPartition? partition)
+                                        IReadOnlyList<SectorInfo> sectors, FlashPartition? partition,
+                                        PhysicalLayout? layout, EcuProfile? profile)
     {
         // 1. Ausführbares VOLVOECU-Modul — eigener Kopf, eigene CRC über den
-        //    ganzen Block. Das ist kein EEPROM-Datensatz.
-        if (VolvoEcuBlock.TryParse(data, start, out var ecu) && ecu is not null)
+        //    ganzen Block. Das ist kein EEPROM-Datensatz. Nur im TRW-Zweig:
+        //    ein TriCore-Abbild wird gar nicht erst gegen ein Volvo-Format geprüft.
+        if (profile is null or { Container: ContainerKind.TrwSector } &&
+            VolvoEcuBlock.TryParse(data, start, out var ecu) && ecu is not null)
             return new FlashRegion(start, length, RegionKind.Code,
-                VolvoEcuDescription(ecu), Entropy(data, start, length))
+                VolvoEcuDescription(ecu), BinaryHeuristics.Entropy(data, start, length))
             {
                 Title = "Low-Flash-Code / VOLVOECU-Modul",
                 Confidence = ecu.CrcOk ? RegionConfidence.Confirmed : RegionConfidence.Strong
             };
 
-        double entropy = Entropy(data, start, length);
-        double duplicates = DuplicateRatio(data, start, length);
+        double entropy = BinaryHeuristics.Entropy(data, start, length);
+        double duplicates = BinaryHeuristics.DuplicateRatio(data, start, length);
         bool sourcePaths = ContainsSourcePaths(data, start, length);
 
-        // 2. Laufzeitveränderte NVM-Daten. Nur in den Low/Mid-Blöcken, denn nur
-        //    dort betreibt das Steuergerät die EEPROM-Emulation.
-        if (partition is { Type: FlashBlockType.Low or FlashBlockType.Mid } &&
-            NvmEvidence(data, start, length, sectors) is { Count: > 0 } evidence)
+        // 2. Laufzeitveränderte NVM-Daten. Nur dort, wo das Steuergerät die
+        //    EEPROM-Emulation überhaupt betreibt.
+        if (partition is { EmulatedEeprom: true } &&
+            NvmEvidence(data, start, length, sectors, partition) is { Count: > 0 } evidence)
             return new FlashRegion(start, length, RegionKind.NvmData,
                 string.Join("; ", evidence), entropy)
             {
@@ -296,9 +249,49 @@ public static class RegionScanner
                 Confidence = sourcePaths ? RegionConfidence.Confirmed : RegionConfidence.Strong
             };
 
+        // 3. Kalibrierungskandidat. Die Art bleibt „Daten" — ein eigener
+        //    RegionKind wäre eine Behauptung im Typsystem. Nur der Titel wird
+        //    genauer, und nur wenn alle vier Merkmale zusammenkommen.
+        if (LooksLikeCalibration(data, start, length, entropy, layout, profile) is { } ratio)
+            return new FlashRegion(start, length, RegionKind.Data,
+                $"Entropie {entropy:0.00}, {ratio:P0} monotone Fenster, beginnt auf einer " +
+                "Löschsektorgrenze — passt zu Kennfeldern, ist aber nicht als Kalibrierung belegt",
+                entropy)
+            {
+                Title = "Datenbereich — Kalibrierungskandidat",
+                Confidence = RegionConfidence.Strong
+            };
+
         return new FlashRegion(start, length, RegionKind.Data,
             $"Entropie {entropy:0.00}, {duplicates:P0} wiederkehrende Blöcke — Daten ohne Sektorkopf",
             entropy);
+    }
+
+    /// <summary>Kleinster Bereich, der als Kalibrierungskandidat in Frage kommt.</summary>
+    private const long MinCalibrationLength = 0x20000;   // 128 KiB
+
+    /// <summary>Anteil monotoner Fenster, ab dem Kennfeldachsen plausibel sind.</summary>
+    private const double CalibrationMonotonicThreshold = 0.35;
+
+    /// <summary>
+    /// Vier Merkmale müssen zusammenkommen: Entropie im Datenband, Mindestgröße,
+    /// genügend monotone Fenster und Beginn auf einer Löschsektorgrenze. Trifft
+    /// nur ein Teil zu, bleibt es schlicht „Daten".
+    ///
+    /// Auch bei vollem Treffer heißt das Ergebnis <em>Kandidat</em>. Ohne A2L
+    /// oder DAMOS lässt sich ein Kalibrierbereich aus dem Abbild allein nicht
+    /// belegen.
+    /// </summary>
+    private static double? LooksLikeCalibration(byte[] data, long start, long length, double entropy,
+                                                PhysicalLayout? layout, EcuProfile? profile)
+    {
+        if (profile is not { Container: ContainerKind.BoschBlockChain }) return null;
+        if (length < MinCalibrationLength) return null;
+        if (entropy is < 3.0 or > 5.5) return null;
+        if (layout is null || !layout.IsEraseSectorStart(start)) return null;
+
+        double ratio = BinaryHeuristics.MonotonicRunRatio(data, start, length);
+        return ratio >= CalibrationMonotonicThreshold ? ratio : null;
     }
 
     private static string VolvoEcuDescription(VolvoEcuBlock ecu)
@@ -324,23 +317,28 @@ public static class RegionScanner
     /// nicht bekannt, deshalb wird hier nichts dekodiert.
     /// </summary>
     private static List<string> NvmEvidence(byte[] data, long start, long length,
-                                            IReadOnlyList<SectorInfo> sectors)
+                                            IReadOnlyList<SectorInfo> sectors,
+                                            FlashPartition partition)
     {
         var evidence = new List<string>();
         var window = data.AsSpan((int)start, (int)length);
 
-        int uptime = CountOccurrences(window, "UPTIME"u8);
+        int uptime = BinaryHeuristics.CountOccurrences(window, "UPTIME"u8);
         if (uptime > 0)
             evidence.Add($"{uptime} × UPTIME-Record angehängt — Beleg für Laufzeitänderungen");
 
-        if (BlockStatus(window) is { } status)
+        // Der AN4868-Blockstatus ist ein NXP-Vorschlagswert für die MPC57xx-
+        // EEPROM-Emulation. Für den DFLASH eines Infineon-Bausteins gilt davon
+        // nichts — deshalb bleibt die Prüfung an die Low/Mid-Blöcke gebunden.
+        if (partition.Type is FlashBlockType.Low or FlashBlockType.Mid &&
+            BlockStatus(window) is { } status)
             evidence.Add($"Blockstatus {status} am Blockanfang (AN4868)");
 
         foreach (var sector in sectors)
         {
             if (!sector.Present) continue;
 
-            int at = IndexOfUInt32Be(window, sector.CrcStored);
+            int at = ByteOrder.IndexOfUInt32(window, sector.CrcStored, Endianness.Big);
             if (at < 0) continue;
 
             // Der eigene Trailer des Sektors zählt nicht als Kopie.
@@ -374,83 +372,19 @@ public static class RegionScanner
         };
     }
 
-    private static int CountOccurrences(ReadOnlySpan<byte> window, ReadOnlySpan<byte> needle)
-    {
-        int count = 0, cursor = 0;
-        while (cursor < window.Length)
-        {
-            int hit = window[cursor..].IndexOf(needle);
-            if (hit < 0) break;
-            count++;
-            cursor += hit + needle.Length;
-        }
-        return count;
-    }
-
-    private static int IndexOfUInt32Be(ReadOnlySpan<byte> window, uint value)
-    {
-        Span<byte> pattern =
-        [
-            (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value
-        ];
-        return window.IndexOf(pattern);
-    }
-
-    // ------------------------------------------------------------------
-    // Heuristiken
-    // ------------------------------------------------------------------
-
-    private static double Entropy(byte[] data, long start, long length)
-    {
-        var histogram = new long[256];
-        for (long i = 0; i < length; i++) histogram[data[start + i]]++;
-
-        double sum = 0;
-        foreach (long count in histogram)
-        {
-            if (count == 0) continue;
-            double p = (double)count / length;
-            sum -= p * Math.Log2(p);
-        }
-        return sum;
-    }
-
     /// <summary>
-    /// Anteil wiederkehrender 16-Byte-Blöcke. Compilierter Code wiederholt sich
-    /// stark, Chiffretext praktisch nie. Gemessen wird ein zusammenhängendes
-    /// Fenster von höchstens 1 MiB — gestreute Stichproben zerstören genau die
-    /// örtliche Wiederholung, auf die es hier ankommt.
+    /// Assert-Strings mit Quelldateipfaden verraten unverschlüsselten Code.
+    /// <c>@(#)</c> ist die SCCS-Kennung, die in Bosch-Ständen üblich ist und
+    /// dieselbe Aussage trägt.
     /// </summary>
-    private static double DuplicateRatio(byte[] data, long start, long length)
-    {
-        const int Width = 16;
-        const long WindowLimit = 1 << 20;
-
-        long blocks = Math.Min(length, WindowLimit) / Width;
-        if (blocks < 32) return 0;
-
-        var seen = new HashSet<(long, long)>();
-        int duplicates = 0;
-
-        for (long b = 0; b < blocks; b++)
-        {
-            long offset = start + b * Width;
-            var key = (BitConverter.ToInt64(data, (int)offset),
-                       BitConverter.ToInt64(data, (int)offset + 8));
-            if (!seen.Add(key)) duplicates++;
-        }
-        return (double)duplicates / blocks;
-    }
-
-    /// <summary>Assert-Strings mit Quelldateipfaden verraten unverschlüsselten Code.</summary>
     private static bool ContainsSourcePaths(byte[] data, long start, long length)
     {
-        ReadOnlySpan<byte> needle = "src/"u8;
-        ReadOnlySpan<byte> alternative = "../"u8;
-
         // Der gesamte Bereich, nicht nur der Anfang: im EMS2.3-ASW steht der
         // erste Pfad erst 580 KB nach Bereichsbeginn.
         var window = data.AsSpan((int)start, (int)length);
-        return window.IndexOf(needle) >= 0 || window.IndexOf(alternative) >= 0;
+
+        return window.IndexOf("src/"u8) >= 0
+            || window.IndexOf("../"u8) >= 0
+            || window.IndexOf("@(#)"u8) >= 0;
     }
 }

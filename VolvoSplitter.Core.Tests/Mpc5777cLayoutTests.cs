@@ -4,7 +4,7 @@ namespace VolvoSplitter.Core.Tests;
 
 public class Mpc5777cLayoutTests
 {
-    private static Mpc5777cLayout Full() =>
+    private static PhysicalLayout Full() =>
         Mpc5777cLayout.For(EcuFamily.Ems24, Mpc5777cLayout.ContainerSize)!;
 
     [Fact]

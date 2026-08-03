@@ -62,6 +62,13 @@ public sealed class SectorInfo : INotifyPropertyChanged
     public bool Present => Status != SectorStatus.Missing;
     public bool CrcOk => Status == SectorStatus.Verified;
 
+    /// <summary>
+    /// Für diesen Sektor gibt es Vorgänge, die das Abbild verändern. Bei den
+    /// Blöcken der Bosch-Blockkette false: dort werden Prüfsummen gerechnet und
+    /// gemeldet, aber nicht gestellt.
+    /// </summary>
+    public bool Writable { get; init; } = true;
+
     public string OutputName => Prefix + PartNumber;
 
     /// <summary>Art des Datensatzes aus dem Dateinamen im Kopf (dst1 / dst2 / pbc).</summary>

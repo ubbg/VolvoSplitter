@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using Microsoft.Win32;
 using VolvoSplitter.Core;
+using VolvoSplitter.Core.TriCore;
 using VolvoSplitter.Native;
 
 namespace VolvoSplitter;
@@ -80,12 +81,15 @@ public partial class MainWindow : Window
         if (_dump is null) return;
 
         FileNameText.Text = _dump.FileName;
-        FileMetaText.Text = $"{_dump.Size:N0} B  ·  0x{_dump.Size:X6}  ·  " +
-                            $"{FlashFormat.FamilyName(_dump.Family)}  ·  " +
-                            FlashFormat.MicroName(_dump.Family);
+        FileMetaText.Text = $"{_dump.Size:N0} B  ·  {Hex.Addr(_dump.Size)}  ·  " +
+                            $"{_dump.Profile.FamilyName}  ·  {_dump.Profile.MicroName}  ·  " +
+                            _dump.Profile.Manufacturer;
 
         ModifiedBadge.Visibility = _dump.IsModified ? Visibility.Visible : Visibility.Collapsed;
-        SaveDumpButton.Visibility = _dump.IsModified ? Visibility.Visible : Visibility.Collapsed;
+        SaveDumpButton.Visibility = _dump.IsModified && Writable
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        UpdateDetectionBadges();
 
         UpdateIdentity();
 
@@ -101,6 +105,12 @@ public partial class MainWindow : Window
         PartitionSection.Visibility = _dump.Partitions.Count > 0
             ? Visibility.Visible : Visibility.Collapsed;
 
+        // Die Herkunft der Blockkarte steht nicht mehr fest im Text, sondern
+        // kommt aus dem Layout selbst.
+        LayoutSourceText.Text = _dump.Layout is { } layout
+            ? layout.SourceNote + (layout.Complete ? "" : " — Zuordnung nicht vollständig")
+            : "";
+
         Map.ImageSize = _dump.Size;
         Map.Sectors = _dump.Sectors;
         Map.Regions = _dump.Regions;
@@ -110,16 +120,51 @@ public partial class MainWindow : Window
         AnimateCards();
     }
 
+    /// <summary>Das erkannte Profil sieht Zurückschreiben vor.</summary>
+    private bool Writable => _dump?.Profile.SupportsWriteBack == true;
+
+    /// <summary>
+    /// Zwei Abzeichen neben dem Dateinamen: eine knappe Erkennung wird als
+    /// „nicht eindeutig" ausgewiesen statt stillschweigend entschieden, und ein
+    /// Profil ohne Zurückschreiben sagt das offen.
+    /// </summary>
+    private void UpdateDetectionBadges()
+    {
+        if (_dump is null) return;
+
+        var detection = _dump.Detection;
+        bool unsure = detection.Ambiguous || detection.DeviceAmbiguous;
+
+        AmbiguousBadge.Visibility = unsure ? Visibility.Visible : Visibility.Collapsed;
+        AmbiguousText.Text = detection.DeviceAmbiguous && detection.DeviceCandidates.Count > 0
+            ? "Baustein offen: " + string.Join(" oder ", detection.DeviceCandidates)
+            : "Zuordnung nicht eindeutig";
+        AmbiguousBadge.ToolTip = string.Join("\n", detection.Evidence);
+
+        ReadOnlyBadge.Visibility = Writable ? Visibility.Collapsed : Visibility.Visible;
+        ReadOnlyBadge.ToolTip = Writable
+            ? null
+            : $"Für {_dump.Profile.FamilyName} werden Prüfsummen gerechnet und gemeldet, " +
+              "aber nicht gestellt. Speichern, Korrigieren und Ersetzen sind deshalb abgeschaltet.";
+    }
+
     private void UpdateIdentity()
     {
         if (_dump is null) return;
 
         var vehicle = _dump.Vehicle;
         var report = _dump.Report;
+        var identity = _dump.Identity;
 
-        if (vehicle is null && report is null)
+        if (vehicle is null && report is null && identity is null)
         {
             IdentityPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (identity is not null && vehicle is null)
+        {
+            UpdateBoschIdentity(identity);
             return;
         }
 
@@ -148,6 +193,35 @@ public partial class MainWindow : Window
         EcuMetaText.Visibility = ecuParts.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>
+    /// Kennungen eines Bosch-Abbilds in dieselben Textblöcke — mit Fundort,
+    /// denn der ist der Beleg. Die Zeile aus der Steuergerätetabelle wird als
+    /// Nutzerangabe gekennzeichnet, nicht als Herstellerdatum.
+    /// </summary>
+    private void UpdateBoschIdentity(BoschIdentity identity)
+    {
+        IdentityPanel.Visibility = Visibility.Visible;
+
+        VinText.Text = identity.VehicleNumber ?? identity.EcuType ?? "Steuergerät nicht benannt";
+
+        VehicleMetaText.Text = string.Join("   ·   ",
+            identity.Hits.Where(h => h.Kind is "Hardware" or "Software" or "Teilenummer")
+                         .Select(h => $"{h.Kind} {h.Value} bei {Hex.Addr(h.Offset)}"));
+        VehicleMetaText.Visibility = VehicleMetaText.Text.Length > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        var parts = new List<string>();
+        if (VagEcuCatalog.Find(identity.EcuType) is { } entry)
+            parts.Add(entry.Display + " (Angabe aus der Steuergerätetabelle)");
+        if (_dump?.Chain.Variant is { } variant)
+            parts.Add($"Variante {variant}");
+        if (_dump?.Chain.Cvn is { } cvn)
+            parts.Add($"CVN {cvn.ValueText}");
+
+        EcuMetaText.Text = string.Join("   ·   ", parts);
+        EcuMetaText.Visibility = parts.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void UpdateStatusLine(string? message = null)
     {
         if (_dump is null) return;
@@ -169,7 +243,8 @@ public partial class MainWindow : Window
 
         StatusLine.Text = string.Join("   ·   ", parts);
         ExtractAllButton.IsEnabled = found > 0;
-        RepairAllButton.Visibility = mismatched > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RepairAllButton.Visibility = mismatched > 0 && Writable
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Karten laufen versetzt ein — ein Vorgang, nicht fünf Effekte.</summary>
@@ -209,7 +284,7 @@ public partial class MainWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = "Flash-Abbild wählen",
-            Filter = "Flash-Abbilder (*.mpc;*.bin)|*.mpc;*.bin|Alle Dateien (*.*)|*.*",
+            Filter = "Flash-Abbilder (*.mpc;*.bin;*.ori)|*.mpc;*.bin;*.ori|Alle Dateien (*.*)|*.*",
             CheckFileExists = true
         };
         if (_dump is not null) dialog.InitialDirectory = _dump.Directory;
@@ -234,7 +309,7 @@ public partial class MainWindow : Window
     private void ResetDropZone()
     {
         DropZone.BorderBrush = (Brush)FindResource("LineBrush");
-        DropHint.Text = "MPC-Dump hierher ziehen";
+        DropHint.Text = "Flash-Abbild hierher ziehen";
     }
 
     private void OnDrop(object sender, DragEventArgs e)
@@ -254,7 +329,7 @@ public partial class MainWindow : Window
                 PickFile();
                 e.Handled = true;
                 break;
-            case Key.S when _dump?.IsModified == true:
+            case Key.S when _dump?.IsModified == true && Writable:
                 SaveDump();
                 e.Handled = true;
                 break;
@@ -318,7 +393,7 @@ public partial class MainWindow : Window
 
     private void OnRepairCrcClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null || SectorOf(sender) is not { } sector) return;
+        if (_dump is null || !Writable || SectorOf(sender) is not { } sector) return;
 
         var repair = _dump.RepairCrc(sector);
         _dump.Analyze(FixedOnly);
@@ -406,7 +481,7 @@ public partial class MainWindow : Window
 
     private void OnReplaceSectorClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null || SectorOf(sender) is not { } sector) return;
+        if (_dump is null || !Writable || SectorOf(sender) is not { } sector) return;
 
         var dialog = new OpenFileDialog
         {
@@ -503,7 +578,7 @@ public partial class MainWindow : Window
     /// <summary>Speichert den Dump. Gibt false zurück, wenn abgebrochen oder fehlgeschlagen.</summary>
     private bool SaveDump()
     {
-        if (_dump is null) return true;
+        if (_dump is null || !Writable) return true;
 
         string stem = Path.GetFileNameWithoutExtension(_dump.FileName);
         string extension = Path.GetExtension(_dump.FileName);
@@ -605,7 +680,7 @@ public partial class MainWindow : Window
 
     private void OnRepairAllClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null) return;
+        if (_dump is null || !Writable) return;
 
         var mismatched = _dump.Sectors.Where(s => s.Status == SectorStatus.CrcMismatch).ToList();
         if (mismatched.Count == 0) return;

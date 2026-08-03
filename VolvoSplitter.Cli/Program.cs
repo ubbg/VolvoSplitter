@@ -2,13 +2,20 @@ using VolvoSplitter.Core;
 
 // ---------------------------------------------------------------------------
 // Stapelbetrieb ohne Oberfläche: zerlegt Flash-Abbilder, schreibt jeden Sektor
-// als Rohdatei und legt einen Textbefund daneben. Möglich, weil die gesamte
-// Analyse in VolvoSplitter.Core ohne WPF-Abhängigkeit steckt.
+// bzw. Block als Rohdatei und legt einen Textbefund daneben. Möglich, weil die
+// gesamte Analyse in VolvoSplitter.Core ohne WPF-Abhängigkeit steckt.
 //
-//   volvosplit <Datei|Ordner> [weitere...] [--fixed] [--out <Ordner>]
+//   volvosplit <Datei|Ordner> [weitere...] [--fixed] [--profile <name>] [--out <Ordner>]
 // ---------------------------------------------------------------------------
 
-ParseArgs(args, out var targets, out bool fixedOnly, out string? outRoot, out bool help);
+ParseArgs(args, out var targets, out bool fixedOnly, out string? outRoot, out string? profile,
+          out bool listProfiles, out bool help);
+
+if (listProfiles)
+{
+    PrintProfiles();
+    return 0;
+}
 
 if (help || targets.Count == 0)
 {
@@ -19,7 +26,7 @@ if (help || targets.Count == 0)
 var files = CollectFiles(targets);
 if (files.Count == 0)
 {
-    Console.Error.WriteLine("Keine Abbilder gefunden (.mpc / .bin).");
+    Console.Error.WriteLine("Keine Abbilder gefunden (.mpc / .bin / .ori).");
     return 1;
 }
 
@@ -28,10 +35,11 @@ foreach (string file in files)
 {
     try
     {
-        Process(file, fixedOnly, outRoot);
+        Process(file, fixedOnly, outRoot, profile);
         ok++;
     }
-    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                  or InvalidOperationException or ArgumentException)
     {
         Console.Error.WriteLine($"Fehler bei {file}: {ex.Message}");
     }
@@ -43,23 +51,26 @@ return ok == files.Count ? 0 : 1;
 
 // ---------------------------------------------------------------------------
 
-static void Process(string path, bool fixedOnly, string? outRoot)
+static void Process(string path, bool fixedOnly, string? outRoot, string? profile)
 {
-    var dump = FlashDump.Load(path, fixedOnly);
+    var dump = FlashDump.Load(path, fixedOnly, profile);
 
     string targetDir = outRoot is null
         ? Path.Combine(dump.Directory, Path.GetFileNameWithoutExtension(dump.FileName) + "_sektoren")
         : Path.Combine(outRoot, Path.GetFileNameWithoutExtension(dump.FileName));
     Directory.CreateDirectory(targetDir);
 
-    Console.WriteLine($"{dump.FileName}  ·  {FlashFormat.FamilyName(dump.Family)}  ·  " +
+    Console.WriteLine($"{dump.FileName}  ·  {dump.Profile.FamilyName}  ·  " +
                       $"{dump.Sectors.Count(s => s.Present)} Sektoren");
+
+    foreach (string evidence in dump.Detection.Evidence)
+        Console.WriteLine($"   Beleg  {evidence}");
 
     foreach (var sector in dump.Sectors.Where(s => s.Present))
     {
         string outPath = dump.ExtractSector(sector, targetDir);
         string flag = sector.CrcOk ? "ok  " : "CRC!";
-        Console.WriteLine($"   {flag}  {sector.Label,-14} {sector.PartNumber,-12} " +
+        Console.WriteLine($"   {flag}  {sector.Label,-28} {sector.PartNumber,-12} " +
                           $"{sector.SizeText,12}  ->  {Path.GetFileName(outPath)}");
     }
 
@@ -70,13 +81,15 @@ static void Process(string path, bool fixedOnly, string? outRoot)
 
 static List<string> CollectFiles(List<string> targets)
 {
+    string[] patterns = ["*.mpc", "*.bin", "*.ori"];
     var files = new List<string>();
+
     foreach (string target in targets)
     {
         if (Directory.Exists(target))
         {
-            files.AddRange(Directory.EnumerateFiles(target, "*.mpc", SearchOption.TopDirectoryOnly));
-            files.AddRange(Directory.EnumerateFiles(target, "*.bin", SearchOption.TopDirectoryOnly));
+            foreach (string pattern in patterns)
+                files.AddRange(Directory.EnumerateFiles(target, pattern, SearchOption.TopDirectoryOnly));
         }
         else if (File.Exists(target))
         {
@@ -91,11 +104,13 @@ static List<string> CollectFiles(List<string> targets)
 }
 
 static void ParseArgs(string[] args, out List<string> targets, out bool fixedOnly,
-                      out string? outRoot, out bool help)
+                      out string? outRoot, out string? profile, out bool listProfiles, out bool help)
 {
     targets = [];
     fixedOnly = false;
     outRoot = null;
+    profile = null;
+    listProfiles = false;
     help = false;
 
     for (int i = 0; i < args.Length; i++)
@@ -108,6 +123,12 @@ static void ParseArgs(string[] args, out List<string> targets, out bool fixedOnl
             case "--out" or "-o":
                 if (i + 1 < args.Length) outRoot = args[++i];
                 break;
+            case "--profile" or "-p":
+                if (i + 1 < args.Length) profile = args[++i];
+                break;
+            case "--list-profiles":
+                listProfiles = true;
+                break;
             case "-h" or "--help" or "/?":
                 help = true;
                 break;
@@ -118,23 +139,46 @@ static void ParseArgs(string[] args, out List<string> targets, out bool fixedOnl
     }
 }
 
+static void PrintProfiles()
+{
+    Console.WriteLine("Profile für --profile:");
+    Console.WriteLine();
+    Console.WriteLine("  ems23      Volvo/TRW EMS2.3, MPC5674F   lesen und schreiben");
+    Console.WriteLine("  ems24      Volvo/TRW EMS2.4, MPC5777C   lesen und schreiben");
+    Console.WriteLine("  tricore    VAG/Bosch EDC17 / MED17      nur lesen, Baustein offen");
+    Console.WriteLine("  tc1796     dito, mit TC1796-Sektorkarte");
+    Console.WriteLine("  tc1797     dito, mit TC1797-Sektorkarte");
+    Console.WriteLine("  unknown    kein Container — nur Bereiche mit Konfidenzangabe");
+    Console.WriteLine();
+    Console.WriteLine("Ohne --profile entscheidet die Erkennung anhand von Belegen im Abbild.");
+    Console.WriteLine("Die Dateigröße allein entscheidet dabei nie zwischen Herstellern.");
+}
+
 static void PrintUsage()
 {
     Console.WriteLine("""
-        Volvo File Splitter — Stapelbetrieb
+        Flash File Splitter — Stapelbetrieb
 
           volvosplit <Datei|Ordner> [weitere...] [Optionen]
 
-        Zerlegt jedes Flash-Abbild in seine Sektoren, schreibt sie als Rohdateien
-        und legt einen Textbefund daneben.
+        Zerlegt jedes Flash-Abbild in seine Sektoren bzw. Blöcke, schreibt sie als
+        Rohdateien und legt einen Textbefund daneben.
+
+        Unterstützt werden Volvo/TRW EMS2.3 (MPC5674F) und EMS2.4 (MPC5777C) sowie
+        lesend die VAG-Steuergeräte auf Infineon TriCore (Bosch EDC17 / MED17).
+        Für TriCore-Abbilder werden Prüfsummen gerechnet und gemeldet, aber nicht
+        gestellt — es wird nichts zurückgeschrieben.
 
         Optionen:
-          -f, --fixed         Nur die fest verdrahteten Standardadressen lesen
-          -o, --out <Ordner>  Zielordner (Standard: neben dem Abbild)
-          -h, --help          Diese Hilfe
+          -f, --fixed           Nur die fest verdrahteten Standardadressen lesen
+          -o, --out <Ordner>    Zielordner (Standard: neben dem Abbild)
+          -p, --profile <name>  Erkennung übersteuern
+              --list-profiles   Bekannte Profile auflisten
+          -h, --help            Diese Hilfe
 
         Beispiele:
           volvosplit C:\Dumps\ecu_Micro.mpc
           volvosplit C:\Dumps --out C:\Ausgabe
+          volvosplit ecu.ori --profile tc1797
         """);
 }

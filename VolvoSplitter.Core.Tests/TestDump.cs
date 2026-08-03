@@ -100,6 +100,18 @@ public static class TestDump
         data[offset + 3] = (byte)value;
     }
 
+    public static void WriteLe(byte[] data, long offset, uint value)
+    {
+        data[offset] = (byte)value;
+        data[offset + 1] = (byte)(value >> 8);
+        data[offset + 2] = (byte)(value >> 16);
+        data[offset + 3] = (byte)(value >> 24);
+    }
+
+    public static uint ReadLe(ReadOnlySpan<byte> data, long offset) =>
+        (uint)(data[(int)offset] | (data[(int)offset + 1] << 8) |
+               (data[(int)offset + 2] << 16) | (data[(int)offset + 3] << 24));
+
     public static uint ReadBe(ReadOnlySpan<byte> data, int offset) =>
         (uint)((data[offset] << 24) | (data[offset + 1] << 16) |
                (data[offset + 2] << 8) | data[offset + 3]);

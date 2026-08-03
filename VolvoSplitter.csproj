@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>VolvoSplitter</AssemblyName>
     <RootNamespace>VolvoSplitter</RootNamespace>
-    <ApplicationTitle>Volvo File Splitter</ApplicationTitle>
+    <ApplicationTitle>Flash File Splitter</ApplicationTitle>
   </PropertyGroup>
 
   <!-- Die Schwesterprojekte liegen als Unterordner; das Wurzelprojekt darf ihre
