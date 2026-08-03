@@ -73,8 +73,8 @@ public class BoschChecksumTests
     [Fact]
     public void Add16_MatchesExpectedValue()
     {
-        // Ein 16-Bit-Wort verschiebt die Summe um höchstens 0xFFFF; ein
-        // beliebiger Abstand braucht deshalb einen breiteren Stellbereich.
+        // Das letzte Wort zählt um 16 Bit geschoben, das vorletzte normal —
+        // zusammen decken sie jeden 32-Bit-Abstand ab.
         var body = Body(TriCoreDump.Add16AdjustBytes + 0x400, 0xBEEF);
         TriCoreDump.AdjustAdd16(body, 0, body.Length);
 

@@ -3,6 +3,35 @@
 Das Format folgt lose [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
+## Unveröffentlicht
+
+### ADD16 vollständig geklärt
+
+Die zwei ADD16-Strukturen, die in v1.1.0 noch als offener Punkt geführt wurden, gehen jetzt
+auf. Bei `SB_ADD16_ALGO_E` zählt das **letzte** 16-Bit-Wort des Bereichs um 16 Bit nach links
+geschoben, alle übrigen normal.
+
+Der Hinweis lag in der Messung schon vor: Ohne die Verschiebung stimmten in beiden Fällen die
+unteren 16 Bit der Summe exakt, die oberen nicht — und die Differenz war jeweils genau das
+letzte Wort. Bestätigt am Quelltext des „MEDC17 Checksum Analyzer“, dessen Schleife das letzte
+Wort ebenfalls aussetzt und gesondert addiert.
+
+Damit gehen **alle 59 Prüfsummenstrukturen** der fünf ausgewerteten Abbilder auf — mit einer
+Ausnahme, die keine ist: der Dataset-Block des getunten Porsche-Abbilds. Dieselbe Firmware
+liegt unverändert daneben und geht vollständig auf.
+
+Nebenwirkung im Testgerüst: Die ADD16-Stellgröße schrumpft von bis zu 128 KiB auf 4 Byte. Das
+vorletzte Wort trägt die untere Hälfte des Abstands, das letzte die obere — zusammen decken
+sie jeden 32-Bit-Abstand ab, ohne Verteilungsschleife.
+
+### CVN: Mehrfachvorkommen als offener Punkt
+
+Der Bosch-Funktionsrahmen für MED17.5 spricht bei OBD-Mode $09 durchgehend im Plural von
+CVNunknowns. `FindCvn` bricht beim ersten Fund ab; ob weitere überhaupt eine eigene
+Konfigurationsstruktur im Abbild haben, ist ungeprüft. Dokumentiert, Verhalten unverändert.
+
+---
+
 ## v1.1.0
 
 ### VAG-Steuergeräte auf Infineon TriCore lesen

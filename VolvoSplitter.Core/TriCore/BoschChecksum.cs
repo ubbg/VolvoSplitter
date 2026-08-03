@@ -97,29 +97,36 @@ public static class BoschChecksum
     }
 
     /// <summary>
-    /// Summe der 16-Bit-Worte, Überlauf verworfen.
+    /// Summe der 16-Bit-Worte — mit einer Eigenheit: das <em>letzte</em> Wort
+    /// des Bereichs zählt um 16 Bit nach links geschoben, also in die obere
+    /// Hälfte der Summe. Alle übrigen zählen normal.
     ///
-    /// <strong>Offener Punkt.</strong> In den fünf ausgewerteten EDC17-Abbildern
-    /// gehen alle <see cref="Crc32"/>- und <see cref="Add32"/>-Strukturen auf,
-    /// aber beide vorkommenden ADD16-Strukturen nicht — mit keiner
-    /// Bereichsdeutung. Auffällig: rechnet man ein 16-Bit-Wort weniger
-    /// (<c>csEnd - csStart</c> statt <c>+ 1</c>), stimmen in <em>beiden</em>
-    /// Fällen die unteren 16 Bit exakt (0x7FB8AFFE und 0xFC5AAFFE gegen
-    /// erwartete 0xCAFEAFFE), die oberen dagegen nicht. Das reicht für einen
-    /// Verdacht — ADD16 könnte 16-bittig vergleichen —, nicht für eine Regel.
+    /// Das ist keine Schönheit, sondern gemessen. Ohne die Verschiebung stimmen
+    /// in den ausgewerteten Abbildern zwar die unteren 16 Bit der Summe, die
+    /// oberen aber nicht — und genau die Differenz ist das letzte Wort. Mit ihr
+    /// gehen beide vorkommenden ADD16-Strukturen exakt auf (0xCAFEAFFE), und
+    /// damit alle 59 Prüfsummenstrukturen der fünf Abbilder.
     ///
-    /// Bis das an mehr ADD16-Fällen entschieden ist, wird wie bei den anderen
-    /// Verfahren gerechnet und die Abweichung gemeldet. Ein Sonderweg, der die
-    /// beiden bekannten Fälle passend macht, wäre genau das Hinbiegen, das
-    /// dieses Werkzeug vermeidet.
+    /// Die Verschiebung deckt sich mit dem „MEDC17 Checksum Analyzer“, dessen
+    /// Schleife das letzte Wort ebenfalls aussetzt und gesondert addiert.
+    ///
+    /// Bei ungerader Bereichslänge bleibt diese Fassung im Bereich, statt wie
+    /// das Vorbild ein Byte darüber hinaus zu lesen. In den ausgewerteten
+    /// Abbildern ist jede ADD16-Länge durch vier teilbar; der Unterschied ist
+    /// bisher theoretisch.
     /// </summary>
     public static uint Add16(ReadOnlySpan<byte> data, uint start)
     {
+        if (data.Length < 2) return start;
+
+        // Versatz des letzten vollen Worts, auf gerade Zahl abgerundet.
+        int last = (data.Length - 2) & ~1;
+
         uint sum = start;
-        int at = 0;
-        for (; at + 2 <= data.Length; at += 2)
+        for (int at = 0; at < last; at += 2)
             sum += ByteOrder.ReadUInt16(data, at, Endianness.Little);
-        return sum;
+
+        return sum + ((uint)ByteOrder.ReadUInt16(data, last, Endianness.Little) << 16);
     }
 
     /// <summary>Rechnet nach, was die Struktur verlangt. Null bei unbekannter Kennung.</summary>

@@ -576,9 +576,11 @@ public static class BoschBlockChain
     /// 0xFFFC — der geprüfte Bereich ist der Blockinhalt ohne den Abschluss,
     /// und 0xFFFB ist keine Wortgrenze.
     ///
-    /// Die beiden verbliebenen Abweichungen sind <c>ADD16</c>-Strukturen; siehe
-    /// <see cref="BoschChecksum"/>. Sie werden als Abweichung gemeldet, nicht
-    /// passend gerechnet.
+    /// Die beiden zunächst offenen <c>ADD16</c>-Abweichungen sind inzwischen
+    /// geklärt — ihr letztes Wort zählt verschoben, siehe
+    /// <see cref="BoschChecksum.Add16"/>. Damit gehen alle 59 Strukturen der
+    /// fünf Abbilder auf, bis auf den Dataset-Block eines nachweislich
+    /// veränderten Abbilds.
     /// </summary>
     public static List<BoschChecksumStructure> VerifyChecksums(byte[] data, PhysicalLayout layout,
                                                                BoschBlock block)

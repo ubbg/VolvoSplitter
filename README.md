@@ -743,8 +743,11 @@ Wort-Deutung 11. Dass der Fehler so lange unentdeckt blieb, hat einen Grund: die
 ausschließlich `ADD32`-Fälle, deren Wortschleife die drei überzähligen Bytes gar nicht liest.
 Ein Verfahren maskierte den Fehler der anderen beiden.
 
-Die zwei verbliebenen Abweichungen sind `ADD16`-Strukturen und bleiben ein offener Punkt; sie
-werden gemeldet, nicht passend gerechnet.
+Die zwei zunächst verbliebenen Abweichungen waren `ADD16`-Strukturen und sind inzwischen
+geklärt: Bei ADD16 zählt das **letzte** Wort des Bereichs um 16 Bit nach links geschoben, alle
+übrigen normal. Ohne die Verschiebung stimmen die unteren 16 Bit der Summe, die oberen nicht —
+und genau die Differenz ist das letzte Wort. Damit gehen **alle 59 Strukturen** der fünf
+Abbilder auf, bis auf den Dataset-Block eines nachweislich getunten Abbilds.
 
 ---
 

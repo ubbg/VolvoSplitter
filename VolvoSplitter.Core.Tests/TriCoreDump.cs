@@ -196,11 +196,12 @@ public static class TriCoreDump
     }
 
     /// <summary>
-    /// Größter Stellbereich, den ADD16 braucht: ein 16-Bit-Wort verschiebt die
-    /// Summe um höchstens 0xFFFF, ein beliebiger 32-Bit-Abstand also erst nach
-    /// 65537 Wörtern. CRC32 und ADD32 kommen mit einem einzigen Wort aus.
+    /// Stellbereich, den ADD16 braucht: zwei Wörter. Das letzte zählt um 16 Bit
+    /// geschoben, deckt also die obere Hälfte des Abstands ab, das vorletzte die
+    /// untere — zusammen jeder 32-Bit-Abstand. CRC32 und ADD32 kommen mit einem
+    /// einzigen Wort aus.
     /// </summary>
-    public const int Add16AdjustBytes = (0x10001 + 1) * 2;
+    public const int Add16AdjustBytes = 4;
 
     /// <summary>Stellt den Bereichsschluss so, dass der Sollwert herauskommt.</summary>
     private static void Adjust(byte[] data, long from, long to, byte algorithm)
@@ -226,34 +227,29 @@ public static class TriCoreDump
     }
 
     /// <summary>
-    /// Verteilt den Abstand zur Sollsumme auf die letzten Wörter des Bereichs.
-    /// Der Stellbereich wird zuerst genullt, damit die Vorsumme feststeht.
+    /// Stellt den Bereichsschluss auf die ADD16-Sollsumme. Zwei Wörter genügen,
+    /// weil das letzte um 16 Bit geschoben zählt: das vorletzte trägt die untere
+    /// Hälfte des Abstands, das letzte die obere. Beide werden zuerst genullt,
+    /// damit die Vorsumme feststeht.
     /// </summary>
     public static void AdjustAdd16(byte[] data, long from, long to)
     {
-        long region = Math.Min(to - from, Add16AdjustBytes) & ~1L;
-        long regionStart = to - region;
+        if (to - from < Add16AdjustBytes)
+            throw new ArgumentException(
+                $"Bereich von {to - from:N0} B ist zu klein für eine ADD16-Stellgröße; " +
+                $"nötig sind {Add16AdjustBytes} B.");
 
-        Array.Clear(data, (int)regionStart, (int)region);
+        long tail = to - 4;
+        Array.Clear(data, (int)tail, 4);
 
         uint diff = BoschChecksum.DefaultExpectedValue -
                     BoschChecksum.Add16(data.AsSpan((int)from, (int)(to - from)),
                                         BoschChecksum.DefaultStartValue);
 
-        long at = to;
-        while (diff > 0 && at - 2 >= regionStart)
-        {
-            ushort chunk = diff > 0xFFFF ? (ushort)0xFFFF : (ushort)diff;
-            at -= 2;
-            data[at] = (byte)chunk;
-            data[at + 1] = (byte)(chunk >> 8);
-            diff -= chunk;
-        }
-
-        if (diff != 0)
-            throw new ArgumentException(
-                $"Bereich von {to - from:N0} B ist zu klein für eine ADD16-Stellgröße; " +
-                $"nötig sind bis zu {Add16AdjustBytes:N0} B.");
+        data[tail] = (byte)diff;                // vorletztes Wort: untere Hälfte
+        data[tail + 1] = (byte)(diff >> 8);
+        data[tail + 2] = (byte)(diff >> 16);    // letztes Wort: obere Hälfte, zählt << 16
+        data[tail + 3] = (byte)(diff >> 24);
     }
 
     /// <summary>
