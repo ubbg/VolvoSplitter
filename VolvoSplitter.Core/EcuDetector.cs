@@ -275,40 +275,71 @@ public static class EcuDetector
     }
 
     /// <summary>
-    /// Wählt den Baustein. Reihenfolge der Belege: Protokolldatei, dann
-    /// Steuergerätetyp aus dem Abbild, dann — nur wenn die Blockkette es
-    /// entscheidet — die Bank-Aufteilung. Bleibt es offen, wird nichts gewählt.
+    /// Wählt den Baustein. Zuerst die benannten Belege — Protokolldatei vor
+    /// Steuergerätetyp —, dann die Gegenprobe am Abbild.
+    ///
+    /// Die Gegenprobe hat das letzte Wort: die Steuergerätetabelle ist eine
+    /// Nutzerangabe, die Bankgrenze im Abbild ist eine Messung. Bestätigt eine
+    /// andere Aufteilung mehr Blockköpfe, wird der Widerspruch gemeldet und dem
+    /// Abbild gefolgt. Bleibt es offen, wird nichts gewählt.
     /// </summary>
     private static (TriCoreDevice Device, List<string> Evidence, int Score,
                     bool Ambiguous, IReadOnlyList<string> Candidates)
         ChooseDevice(byte[] data, EcuReport? report, BoschIdentity? identity)
     {
         var evidence = new List<string>();
+        TriCoreDevice? claimed = null;
+        int score = 0;
 
         if (report is not null && TriCoreDevice.ByName(report.Micro) is { } fromReport)
         {
             evidence.Add($"Protokolldatei nennt Micro „{report.Micro}\" → {fromReport.Name}");
-            return (fromReport, evidence, 45, false, []);
+            claimed = fromReport;
+            score = 45;
         }
-
-        string? ecuType = identity?.EcuType;
-        var entry = VagEcuCatalog.Find(ecuType);
-
-        if (entry is { Ambiguous: false } && TriCoreDevice.ByName(entry.Micros[0]) is { } fromType)
+        else if (VagEcuCatalog.Find(identity?.EcuType) is { } entry)
         {
-            evidence.Add($"Steuergerätetyp {entry.Type} im Abbild → {fromType.Name}");
-            return (fromType, evidence, 0, false, []);
+            if (!entry.Ambiguous && TriCoreDevice.ByName(entry.Micros[0]) is { } fromType)
+            {
+                evidence.Add($"Steuergerätetyp {entry.Type} im Abbild → {fromType.Name}");
+                claimed = fromType;
+            }
+            else
+            {
+                evidence.Add($"Steuergerätetyp {entry.Type} lässt " +
+                             $"{string.Join(" und ", entry.Micros)} zu — nicht entschieden");
+            }
         }
 
-        if (entry is { Ambiguous: true })
-            evidence.Add($"Steuergerätetyp {entry.Type} lässt {string.Join(" und ", entry.Micros)} " +
-                         "zu — nicht entschieden");
+        var counts = HeaderCounts(data, claimed);
+        var best = counts.MaxBy(c => c.Count);
 
-        // Ohne Kennung: die Blockkette befragen. Nur wenn genau eine Aufteilung
-        // Blöcke bestätigt, ist das ein Beleg — sonst bleibt es mehrdeutig.
-        var decided = DecideByChain(data, evidence);
-        if (decided is not null)
-            return (decided, evidence, 0, false, []);
+        if (claimed is not null)
+        {
+            int claimedCount = counts.First(c => c.Device.Name == claimed.Name).Count;
+
+            if (best.Count > claimedCount)
+            {
+                evidence.Add($"Der Abbildinhalt widerspricht: {best.Device.Name} bestätigt " +
+                             $"{best.Count} Blockköpfe, {claimed.Name} nur {claimedCount} — " +
+                             "die Bankaufteilung folgt dem Abbild, nicht der Tabelle");
+                return (best.Device, evidence, score, false, []);
+            }
+
+            return (claimed, evidence, score, false, []);
+        }
+
+        // Ohne benannten Beleg entscheidet allein die Kette — und nur bei
+        // klarem Vorsprung. Gleichstand heißt mehrdeutig, nicht „der erste".
+        var mapped = counts.OrderByDescending(c => c.Count).ToList();
+
+        if (mapped.Count >= 2 && mapped[0].Count > 0 && mapped[0].Count > mapped[1].Count)
+        {
+            evidence.Add($"{mapped[0].Device.Name} bestätigt {mapped[0].Count} Blockköpfe, " +
+                         $"{mapped[1].Device.Name} nur {mapped[1].Count} — die Bankaufteilung " +
+                         "entscheidet der Abbildinhalt");
+            return (mapped[0].Device, evidence, 0, false, []);
+        }
 
         var open = TriCoreDevice.Mapped.Select(d => d.Name).ToList();
         evidence.Add($"Baustein nicht bestimmt — {string.Join(" oder ", open)} kommen in Frage; " +
@@ -318,27 +349,21 @@ public static class EcuDetector
     }
 
     /// <summary>
-    /// Probiert die hinterlegten Bausteine und nimmt den, dessen Bankaufteilung
-    /// mehr Blockköpfe bestätigt. Das ist ein Beleg aus dem Abbild, kein Raten:
-    /// nur eine richtige Bankgrenze lässt <c>blockEnd</c> und <c>0xDEADBEEF</c>
-    /// zusammenpassen. Bei Gleichstand wird nichts gewählt.
+    /// Zählt je Baustein, wie viele Blockköpfe seine Bankaufteilung bestätigt.
+    /// Nur eine richtige Bankgrenze lässt <c>blockEnd</c> und
+    /// <c>0xDEADBEEF</c> zusammenpassen — das ist eine Messung, kein Raten.
     /// </summary>
-    private static TriCoreDevice? DecideByChain(byte[] data, List<string> evidence)
+    private static List<(TriCoreDevice Device, int Count)> HeaderCounts(byte[] data,
+                                                                       TriCoreDevice? extra)
     {
-        var scored = TriCoreDevice.Mapped
+        var devices = new List<TriCoreDevice>(TriCoreDevice.Mapped);
+        if (extra is not null && devices.All(d => d.Name != extra.Name)) devices.Add(extra);
+
+        return devices
             .Select(device => (device,
-                               count: BoschBlockChain.ScanHeaders(
+                               BoschBlockChain.ScanHeaders(
                                    data, TriCoreLayout.For(device, data.LongLength)).Count))
-            .OrderByDescending(x => x.count)
             .ToList();
-
-        if (scored.Count < 2 || scored[0].count == 0 || scored[0].count == scored[1].count)
-            return null;
-
-        evidence.Add($"{scored[0].device.Name} bestätigt {scored[0].count} Blockköpfe, " +
-                     $"{scored[1].device.Name} nur {scored[1].count} — die Bankaufteilung " +
-                     "entscheidet der Abbildinhalt");
-        return scored[0].device;
     }
 
     /// <summary>
