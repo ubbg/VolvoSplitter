@@ -9,7 +9,6 @@
     <AssemblyName>VolvoSplitter</AssemblyName>
     <RootNamespace>VolvoSplitter</RootNamespace>
     <ApplicationTitle>Volvo File Splitter</ApplicationTitle>
-    <Version>3.0.0</Version>
   </PropertyGroup>
 
   <!-- Die Schwesterprojekte liegen als Unterordner; das Wurzelprojekt darf ihre

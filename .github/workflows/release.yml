@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag, für den das Release gebaut wird (z. B. v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Self-contained-Pakete für Windows lassen sich nur unter Windows bauen,
+    # weil die WPF-Anwendung auf net10.0-windows zielt. Die Linux-CLI entsteht
+    # per Cross-Publish im selben Lauf.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Tag und Version bestimmen
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = if ('${{ inputs.tag }}') { '${{ inputs.tag }}' } else { '${{ github.ref_name }}' }
+          $version = $tag -replace '^v', ''
+          "tag=$tag"         >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Tag $tag, Version $version"
+
+      - name: Tests
+        run: >
+          dotnet test VolvoSplitter.Core.Tests/VolvoSplitter.Core.Tests.csproj
+          -c Release --verbosity normal
+
+      - name: Oberfläche veröffentlichen (win-x64)
+        run: >
+          dotnet publish VolvoSplitter.csproj -c Release -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:Version=${{ steps.meta.outputs.version }}
+          -o publish/gui-win-x64
+
+      - name: Kommandozeile veröffentlichen (win-x64)
+        run: >
+          dotnet publish VolvoSplitter.Cli/VolvoSplitter.Cli.csproj -c Release -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:Version=${{ steps.meta.outputs.version }}
+          -o publish/cli-win-x64
+
+      - name: Kommandozeile veröffentlichen (linux-x64)
+        run: >
+          dotnet publish VolvoSplitter.Cli/VolvoSplitter.Cli.csproj -c Release -r linux-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:Version=${{ steps.meta.outputs.version }}
+          -o publish/cli-linux-x64
+
+      - name: Pakete schnüren
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.meta.outputs.tag }}'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          Compress-Archive -Path publish/gui-win-x64/*       -DestinationPath "dist/VolvoSplitter-$tag-win-x64.zip"
+          Compress-Archive -Path publish/cli-win-x64/*       -DestinationPath "dist/volvosplit-$tag-win-x64.zip"
+          tar -czf "dist/volvosplit-$tag-linux-x64.tar.gz" -C publish/cli-linux-x64 .
+
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Release-Notes aus CHANGELOG.md lesen
+        id: notes
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.meta.outputs.tag }}'
+          $found = $false
+
+          if (Test-Path CHANGELOG.md) {
+            $lines = @(Get-Content CHANGELOG.md)
+            $start = ($lines | Select-String -SimpleMatch "## $tag" | Select-Object -First 1).LineNumber
+
+            if ($start) {
+              # LineNumber ist 1-basiert; der Abschnittsinhalt beginnt dahinter.
+              $end = $lines.Count
+              for ($i = $start; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -like '## *') { $end = $i; break }
+              }
+              if ($end -gt $start) {
+                $body = ($lines[$start..($end - 1)] -join "`n").Trim()
+                if ($body) {
+                  Set-Content -Path release-notes.md -Value $body -Encoding utf8
+                  $found = $true
+                }
+              }
+            }
+          }
+
+          if (-not $found) {
+            Write-Host "Kein Abschnitt '## $tag' in CHANGELOG.md — GitHub erzeugt die Notes."
+          }
+          "found=$($found.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+      - name: Release veröffentlichen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.meta.outputs.tag }}'
+          $assets = @(Get-ChildItem dist | ForEach-Object { $_.FullName })
+
+          $notes = if ('${{ steps.notes.outputs.found }}' -eq 'true') {
+            @('--notes-file', 'release-notes.md')
+          } else {
+            @('--generate-notes')
+          }
+
+          $ghArgs = @('release', 'create', $tag) + $assets +
+                    @('--title', "Volvo File Splitter $tag") + $notes
+
+          & gh $ghArgs
+          if ($LASTEXITCODE -ne 0) { throw "gh release create ist mit $LASTEXITCODE fehlgeschlagen." }
