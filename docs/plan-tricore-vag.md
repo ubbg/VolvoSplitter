@@ -60,37 +60,109 @@ Adressabbildung muss beide Formen annehmen (Bit `0x20000000` beim Umrechnen mask
 Das ist keine Feinheit: die Infineon-Unterlagen nennen `0xA…`, die Bosch-Blockköpfe im
 Abbild nennen `0x8…`.
 
-### B. Bosch-Blockkopf — verkettete Liste im Abbild
+### B. Bosch-Blockstruktur — Kopf, Prüfsummenstrukturen, CVN
 
-Quelle: **`github.com/fanyi3315/bosch-med17-block-reader`** (JavaScript, ~130 Zeilen,
-erstellt 2019), vom Auftraggeber zur freien Nutzung freigegeben. Ausgewertet wurden der
-Quelltext **und die vollständige Beispielausgabe über alle acht Blöcke** eines
-8-MiB-MED17-Abbilds. Daraus ergibt sich folgender Kopf, alles little-endian,
-Gesamtlänge **fest 0x30 Byte**:
+**Zwei unabhängige Quellen**, beide vom Auftraggeber zur Nutzung bereitgestellt:
+
+* **Q1** — `github.com/fanyi3315/bosch-med17-block-reader` (JavaScript, ~130 Zeilen).
+  Läuft die Blockkette ab. Ausgewertet wurden Quelltext **und die vollständige
+  Beispielausgabe über alle acht Blöcke** eines 8-MiB-MED17-Abbilds.
+* **Q2** — „MEDC17 Checksum Analyzer & Corrector v1.1" (Python). Kennt zusätzlich die
+  Prüfsummenstrukturen, die drei Prüfalgorithmen, den `0xDEADBEEF`-Abschluss, das
+  OTP-Flag und die CVN.
+
+Sie überschneiden sich im Blockkopf und **stimmen dort exakt überein** (§B4). Das ist der
+wichtigste Umstand an diesem Material: zwei getrennt entstandene Werkzeuge, dieselbe
+Struktur.
+
+#### B1 — Blockkopf, little-endian, feste Länge 0x34 bis zu den Strukturen
 
 | Versatz | Breite | Feld | Anmerkung |
 | --- | --- | --- | --- |
-| +0x00 | u32 | `blockIdentifier` | **unteres Byte** = Blockart, obere Bytes = Flags (Beispiel `0x00800020` → Art `0x20`) |
+| +0x00 | u32 | `blockIdentifier` | **unteres Byte** = Blockart; **Bit `0x00800000` = OTP** (One-Time Programmable) |
 | +0x04 | u32 | `size` | Blocklänge |
-| +0x08 | u32 | `nextSector` | CPU-Adresse des **nächsten** Blockkopfes — die Verkettung |
-| +0x0C | u32 | `blockEnd` | Endadresse |
-| +0x10 | u32 | `table1Pointer` | CPU-Adresse einer u32-Tabelle |
+| +0x08 | u32 | `nextSector` | CPU-Adresse des nächsten Blockkopfes — die Verkettung (nur Q1) |
+| +0x0C | u32 | `blockEnd` | Endadresse; `= blockStart + size − 4` |
+| +0x10 | u32 | `table1Pointer` | CPU-Adresse einer Wortliste |
 | +0x14 | u32 | `table2Pointer` | dito |
 | +0x18 | u8 | `table1Size` | Anzahl Einträge |
 | +0x19 | u8 | `table2Size` | Anzahl Einträge |
-| +0x1A | 18 B | `identifier` | ASCII, z. B. `10SW008917` |
-| +0x2C | u32 | `numberOfChecksumStructures` | Anzahl der Prüfsummenstrukturen — **nur die Anzahl**, siehe unten |
-| +0x30 | | Ende des Kopfes | dahinter Blockinhalt |
+| +0x1A | 10 B | `swIdentifier` | ASCII, z. B. `10SW008917` |
+| +0x24 | 8 B | — | im Beispiel `0xFF`-Füllung; Bedeutung unbekannt |
+| +0x2C | u32 | `numChecksumStructures` | Anzahl der Prüfsummenstrukturen |
+| +0x30 | u32 | `checksumAdjust` | Abgleichwort |
+| +0x34 | n × 32 B | Prüfsummenstrukturen | siehe B2 |
+| +0x34 + n·32 | u32 | Prüfwort des Blocks | danach beginnt der Blockinhalt |
 
-Blockarten laut jenem Werkzeug:
+Q1 las die 10 Byte Kennung plus die 8 Folgebytes als eine 18-Byte-Kennung mit
+`0xFF`-Füllung — dieselben Bytes, gröbere Deutung. Q2 ist hier genauer.
+
+**Blockepilog**, relativ zum Blockende (aus Q2):
+
+| Lage | Inhalt |
+| --- | --- |
+| `start + size − 136` | RSA-Signatur, 128 B (RIPEMD-160, e=3) |
+| `start + size − 8` | `dCSAdjust`, 4 B — das Stellwort der CRC32 |
+| `start + size − 4` | **`0xDEADBEEF`** — Blockabschluss |
+
+#### B2 — Prüfsummenstruktur, 32 Byte
+
+| Versatz | Breite | Feld |
+| --- | --- | --- |
+| +0x00 | u8 | `csBlockId` |
+| +0x04 | u32 | `csStart` — CPU-Adresse, Beginn des geprüften Bereichs |
+| +0x08 | u32 | `csEnd` — CPU-Adresse, **einschließlich** |
+| +0x0C | u32 | `csStartVal` — Startwert, im Regelfall `0xFADECAFE` |
+| +0x10 | u32 | `csExpectedVal` — Sollwert, im Regelfall `0xCAFEAFFE` |
+| +0x14 | u32 | `blockIdRef` |
+| +0x18 | u32 | `blockIdAddr` |
+| +0x1C | u16 | `csAlgorithm` — unteres Byte zählt |
+
+**Die drei Algorithmen** — alle mit Startwert `0xFADECAFE`:
+
+| ID | Name | Verfahren | Sollergebnis |
+| --- | --- | --- | --- |
+| `0x00` | `SB_CRC32_ALGO_E` | CRC32 bitweise, Polynom `0xEDB88320`, little-endian-Doppelworte | **`0x35015001`** |
+| `0x01` | `SB_ADD32_ALGO_E` | Summe der u32-Doppelworte, Überlauf verworfen | `0xCAFEAFFE` |
+| `0x10` | `SB_ADD16_ALGO_E` | Summe der u16-Worte | `0xCAFEAFFE` |
+
+`0x35015001` ist exakt das Einerkomplement von `0xCAFEAFFE` — nachgerechnet. Alle drei
+Algorithmen lassen sich mit dem vorhandenen `Crc32` bzw. zwei Dutzend Zeilen Summenbildung
+umsetzen. **Damit wird aus „Blockkette gefunden" ein rechnerisch bestätigter Prüfwert** —
+die stärkste Belegform, die dieses Werkzeug kennt.
+
+Adressumrechnung je Struktur:
+`Datei-Offset = csStart − blockStartCpu + blockStartDatei`.
+
+#### B3 — Zwei weitere lesbare Angaben
+
+**Steuergerätevariante.** Im Dataset-Block (`0x60`) steht bei Blockversatz **+0x78** eine
+schrägstrichgetrennte Zeichenkette, z. B. `34/1/EDC17_C46/5/P643//C643X5L8///`. Das Feld
+mit `EDC17`/`MED17`/`MEDC17` benennt die Variante. Das ist eine **feste Fundstelle** und
+damit deutlich belastbarer als freies Durchsuchen nach Zeichenketten — es löst zugleich
+die MCU-Mehrdeutigkeit aus §C.
+
+**CVN** (Calibration Verification Number). Eine CRC32 (tabellengetrieben, Start
+`0xFFFFFFFF`, Endabgleich `0xFFFFFFFF`) über mehrere Speicherbereiche. Die Bereiche stehen
+nicht fest im Werkzeug, sondern werden aus einer Konfigurationsstruktur im Abbild gelesen:
+gesucht wird das Muster `{Zeiger, DS_START, DS_WOCS_END, Anzahl}`, wobei `DS_START` die
+Startadresse des Dataset-Blocks ist. Der Zeiger führt auf eine Tabelle aus
+`(Start, Ende)`-Paaren. Die CVN wird **gelesen und ausgewiesen** — sie ist die Zahl, die
+die OBD-Diagnose zur Prüfung der Kalibrierung meldet.
+
+#### B4 — Extended Blockarten (Q2)
 
 | ID | Bedeutung | ID | Bedeutung |
 | --- | --- | --- | --- |
-| `0x10` | Startup block | `0x60` | Dataset #0 |
-| `0x20` | Tuning protection | `0x90` | Customer tuning protection |
-| `0x30` | Customer block | `0xA0` | Application software #2 |
-| `0x40` | Application software #0 | `0xC0` | Absolute constants #0 |
-| `0x50` | Application software #1 | | |
+| `0x10` | Startup Block | `0x80` | Variant dataset |
+| `0x20` | Tuning protection | `0x90` | Customer Tuning protection |
+| `0x30` | Customer Block | `0xA0` | Application software #2 |
+| `0x40` | Application software #0 | `0xB0` | Application software #3 |
+| `0x50` | Application software #1 | `0xC0` | Absolute constants #0 |
+| `0x60` | Dataset #0 | `0xD0` | Emulation extension chip |
+| `0x70` | Dataset #1 | `0xE0` | Customer specific |
+| | | `0xF0` | Ramloader |
+| | | `0xF1` | Application Attestation |
 
 Einstiegspunkt im Vorbild: `0x80018000` (dort „alternative bootloader"), danach jeweils
 `nextSector` folgen. Die Beispielausgabe zeigt eine Kette über **acht** Blöcke, die von
@@ -109,10 +181,27 @@ Das ist unabhängig von den Datenblättern **die Bestätigung** für PMU1 bei `0
 beim TC1797 — und der Beleg dafür, dass MED17.1-Geräte externen Flash über die EBU haben.
 Ein 8-MiB-MED17-Abbild ist also kein Fehler, sondern ein eigener Containerfall.
 
-#### Nachgerechnete Invarianten — die Prüfregeln des Parsers
+#### B5 — Nachgerechnete Invarianten und der Abgleich beider Quellen
 
-Die Beispielausgabe enthält alle acht Blöcke vollständig. Damit lassen sich die Regeln
-**nachrechnen** statt annehmen. Zwei gehen 8 von 8 mal exakt auf:
+Zuerst die Kreuzprüfung. Q1 und Q2 kennen einander nicht und leiten die Blockgrenze
+verschieden her — Q1 aus `blockEnd = blockStart + size − 4`, Q2 aus
+`block_start = ((block_end + 5) − size − 1)`. Ausgerechnet über alle acht Blöcke ergeben
+**beide Formeln dasselbe Ergebnis**, ohne Abweichung. Es ist dieselbe Struktur.
+
+Der zweite Abgleich betrifft die Prüfsummenstrukturen. Q2 sagt: 32 Byte je Struktur ab
++0x34, danach ein Prüfwort. Rechnet man das auf die von Q1 beobachteten Tabellenzeiger um,
+trifft es bei den beiden Blöcken, deren Tabellen unmittelbar folgen, **punktgenau**:
+
+| Block | Anzahl Strukturen | Ende + Prüfwort | beobachteter `table2Pointer` |
+| --- | --- | --- | --- |
+| 3 Customer tuning prot. | 1 | +0x58 | **+0x58** |
+| 5 ASW #0 | 4 | +0xB8 | **+0xB8** |
+
+Zwei verschiedene Strukturanzahlen, beide exakt — das ist kein Zufall. **Damit ist meine
+frühere Aussage widerlegt, Lage und Größe der Prüfsummenstrukturen seien aus dem Material
+nicht ableitbar.** Sie sind es: 32 Byte, ab +0x34, gefolgt von einem Prüfwort.
+
+Aus der Beispielausgabe folgen weiter diese Regeln — jede 8 von 8 mal:
 
 **(I1) `blockEnd == blockStart + size - 4`** — ohne eine einzige Abweichung:
 
@@ -142,6 +231,11 @@ zu Softwareeinheiten — im Beispiel `10SW008917` (Blöcke 1–4), `10SW026798` 
 
 **(I5) Blockgrößen sind nicht sektorbündig.** Block 4 ist `0xFD04` groß. Eine Prüfung auf
 Sektorausrichtung wäre falsch.
+
+**(I7) `0xDEADBEEF` steht bei `blockStart + size − 4`** (aus Q2). Ein Magiewert am
+Blockende — die schärfste Einzelprüfung überhaupt, weil sie unabhängig von jeder
+Adressrechnung ist. In Q1s Beispielausgabe nicht sichtbar, weil dort nur Kopffelder
+ausgegeben werden; sie widerspricht ihr aber auch nicht.
 
 **(I6) Die Blöcke überlappen sich nicht** und decken den Flash bis auf sechs kleine Lücken
 ab (764 B, 2 × 256 B, 8 KiB in PMU0; 8 KiB und 512 KiB im externen Flash). Der Parser
@@ -191,14 +285,14 @@ wird. Wird nicht übernommen.
 - **Nur MED17 belegt.** Ob EDC17 denselben Kopf trägt, ist plausibel (gleiche
   Bosch-Softwarearchitektur), aber unbelegt. Der Parser prüft das an der Struktur selbst
   über I1–I3, statt es am Steuergerätetyp vorauszusetzen.
-- **Ein Flagbit ist unerklärt.** Block 2 trägt `0x00800020` statt `0x20` — bei genau einem
-  von acht Blöcken ist Bit `0x00800000` gesetzt. Die Blockart ist das untere Byte; das Bit
-  wird gemeldet, seine Bedeutung nicht behauptet.
-- **Prüfsummenstrukturen: nur die Anzahl ist bekannt.** Lage und Größe lassen sich aus dem
-  Beispiel *nicht* ableiten. Rechnet man den Abstand zwischen Kopfende (+0x30) und der
-  ersten Tabelle je Block auf die Strukturanzahl um, ergibt das 40, 236, 34 und 165⅓ Byte
-  je Struktur — kein Muster. Also: Zähler melden, Rest unangetastet lassen. Keine
-  Behauptung, kein geratenes Format.
+- **Das Flagbit ist geklärt.** Block 2 trägt `0x00800020` statt `0x20`; laut Q2 ist Bit
+  `0x00800000` das **OTP-Kennzeichen** (One-Time Programmable). Für einen
+  Tuning-Schutz-Block ist das schlüssig. Wird als Merkmal ausgewiesen.
+- **Zwei Deutungen bleiben Deutung.** Die Namen der Blockarten und der Algorithmen
+  (`SB_CRC32_ALGO_E` usw.) stammen aus den Werkzeugen, nicht aus einer Bosch-Unterlage.
+  Sie werden übernommen, aber als Herkunft gekennzeichnet.
+- **Die acht Bytes bei +0x24 sind unerklärt.** Im Beispiel `0xFF`-Füllung. Werden roh
+  ausgewiesen, nicht gedeutet.
 
 **Das ändert die Ausrichtung des Vorhabens.** Statt Blockgrenzen aus Entropie zu *raten*,
 wird eine Struktur *gelesen und geprüft*. Die Entropieanalyse bleibt, rutscht aber vom
@@ -377,7 +471,9 @@ bleiben die bestehenden Tests grün.
 
 | Beleg | Punkte |
 | --- | --- |
-| Gültiger **Bosch-Blockkopf** bei `0x18000` oder auf einer Löschsektorgrenze (§4) | **+60** |
+| Mindestens ein Block mit **rechnerisch stimmender Prüfsumme** (§B2) | **+80** |
+| Gültiger **Bosch-Blockkopf** samt `0xDEADBEEF`-Abschluss (§4) | **+60** |
+| Variantenstring `EDC17…`/`MED17…` im Dataset-Block bei +0x78 (§B3) | +50, benennt zugleich die Variante |
 | Kennungen `0281`/`0261`+6 Ziffern, `1037`/`1039`+6 Ziffern, `EDC17…`, `MED17…`, `ME17…` | +40, benennt zugleich den Steuergerätetyp |
 | `EcuReport.Micro` aus der Beidatei nennt `TC17xx` | +45 |
 | **Zeigerdichte:** Anteil 4-Byte-*ausgerichteter* LE-Wörter mit oberem Byte `0x80`/`0xA0`/`0x84` und zweitem Byte < 0x10 über Schwelle | +30 |
@@ -477,29 +573,45 @@ public static IReadOnlyList<BoschBlock> Walk(byte[] data, PhysicalLayout layout,
                                              out IReadOnlyList<string> evidence);
 ```
 
-**Einstieg.** Zuerst `PflashBase + 0x18000` wie im Vorbild. Führt das zu keinem gültigen
-Kopf, werden alle Löschsektorgrenzen aus `PhysicalLayout.EraseSectors` durchprobiert —
-das kostet bei TC1797 32 Prüfungen und macht den Parser unabhängig von der einen
-Adresse, an der jenes Werkzeug zufällig ansetzte.
+**Zwei Suchverfahren, die einander bestätigen.** Q1 läuft die Kette über `nextSector`;
+Q2 sucht stattdessen ab dem ersten Nicht-Null-Byte, prüft dort einen Kopf und springt
+hinter den Block zum nächsten Nicht-Null-Byte. Beide werden umgesetzt:
+
+* **Abtastung** (Q2) als Hauptverfahren — sie findet auch Blöcke, deren Kette gerissen ist
+  oder deren Kopf nicht bei `0x18000` beginnt.
+* **Kettenlauf** (Q1) als Gegenprobe — stimmen beide Ergebnismengen überein, ist das ein
+  eigener Beleg und wandert in `Detection.Evidence`. Weichen sie ab, wird die Differenz
+  gemeldet, nicht stillschweigend vereinigt.
 
 **Prüfung eines Kopfes** — erst wenn *alle* zutreffen, gilt er als gültig. Die Regeln
-stammen aus §B und sind dort an acht Blöcken nachgerechnet:
+stammen aus §B und sind dort nachgerechnet:
 
-1. Unteres Byte von Wort 0 steht in der Blockarten-Tabelle.
-2. `Size` liegt zwischen 0x1000 und der Gesamtflashgröße; **keine** Prüfung auf
-   Sektorausrichtung (I5).
-3. **`blockEnd == blockStart + size - 4`** — exakt, ohne Toleranz (I1). Das ist die
-   tragende Regel; sie allein schließt zufällige Bytefolgen praktisch aus.
-4. `Table1Cpu`/`Table2Cpu` liegen **innerhalb des eigenen Blocks** (I2), sofern die
-   zugehörige Anzahl > 0 ist; andernfalls sind Zeiger und Anzahl beide `0`.
-5. `Identifier` besteht aus druckbarem ASCII, mit `0xFF` aufgefüllt (I4).
-6. `NextCpu` ist `0` (Kettenende, I3) **oder** bildet über `PhysicalLayout.ToFile` in eine
-   bekannte Bank ab und trägt dort selbst einen gültigen Kopf.
+1. **`0xDEADBEEF` bei `blockStart + size − 4`** (I7). Die schärfste Einzelprüfung,
+   unabhängig von jeder Adressrechnung — sie steht deshalb an erster Stelle.
+2. Unteres Byte von Wort 0 steht in der Blockarten-Tabelle (B4).
+3. `size` zwischen 0x40 und der Dateigröße, und der Block passt vollständig hinein;
+   **keine** Prüfung auf Sektorausrichtung (I5).
+4. **`blockEnd == blockStart + size − 4`** — exakt, ohne Toleranz (I1).
+5. `blockStart` und `blockEnd` sind gültige TriCore-Flashadressen.
+6. `numChecksumStructures` ist plausibel (Q2 deckelt bei 100).
+7. `table1Pointer`/`table2Pointer` liegen im eigenen Block (I2), sofern die Anzahl > 0 ist.
+8. `swIdentifier` ist druckbares ASCII (I4).
+9. Für den Kettenlauf zusätzlich: `nextSector` ist `0` (I3) **oder** bildet über
+   `PhysicalLayout.ToFile` ab und trägt dort selbst einen gültigen Kopf.
 
-Regel 3 ist der Grund, warum die Kette `Status = Verified` rechtfertigt: eine Bytefolge,
-die zufällig eine bekannte Blockart, eine plausible Größe **und** die exakte
-`start + size - 4`-Beziehung erfüllt, und deren `nextSector` wiederum auf so eine Folge
-zeigt, ist kein Zufall.
+**Prüfsummen nachrechnen — das ist der eigentliche Beleg.** Für jede Struktur des Blocks:
+Bereich `[csStart, csEnd]` über die Adressumrechnung auf Datei-Offsets bringen, mit
+`csStartVal` als Startwert den Algorithmus aus `csAlgorithm` rechnen und gegen den
+Sollwert prüfen — `0x35015001` bei CRC32, `csExpectedVal` bei ADD32 und ADD16.
+
+Erst **das** rechtfertigt `SectorStatus.Verified`. Ein Block, dessen Kopf aufgeht, dessen
+Prüfsummen aber nicht stimmen, bekommt `SectorStatus.CrcMismatch` — den Zustand, den
+`SectorInfo` für den Volvo-Pfad schon kennt und den die Oberfläche schon anzeigt. Ein
+Abbild mit bearbeiteter Kalibrierung sieht damit sofort so aus, wie es ist.
+
+Umsetzung: `Crc32.Compute` deckt CRC32 nicht ab — der Bosch-Algorithmus verarbeitet
+little-endian-Doppelworte bitweise mit freiem Startwert. Das ist eine eigene, rund
+15-zeilige Routine neben dem vorhandenen `Crc32`; ADD32 und ADD16 sind je fünf Zeilen.
 
 **Zeigerauflösung.** Jeder Zeiger — `nextSector`, `table1Pointer`, `table2Pointer` — wird
 über `PhysicalLayout.ToFile` **global** aufgelöst, nie relativ zur Bank des Blocks. Siehe
@@ -521,11 +633,14 @@ aufgeführt (im Beispiel sechs, von 256 B bis 512 KiB) — als Beobachtung, ohne
   schreibt bereits 32-Bit-S3-Adressen, `0x80000000` passt ohne Änderung.
 - Blöcke, deren Kopf nur teilweise aufgeht, erscheinen **nicht** als Sektor, sondern als
   Beleg in `Detection.Evidence` („Blockkopfkandidat bei 0x… nicht bestätigt").
-- `numberOfChecksumStructures` wird als **Zahl** im Bericht ausgewiesen. Lage und Größe der
-  Strukturen sind aus dem Material nicht ableitbar (§B) — es wird kein Bereich dafür
-  markiert und nichts über ihren Inhalt behauptet.
-- `Table1`/`Table2` werden als Wortlisten im Bericht ausgegeben, ohne Deutung.
-- Ein gesetztes Flagbit in den oberen Bytes von Wort 0 wird mit ausgegeben, ohne Deutung.
+- Jede **Prüfsummenstruktur** wird mit Algorithmus, Bereich, Startwert, Sollwert und
+  gerechnetem Wert ausgewiesen — samt Ergebnis. Das ist die Kernaussage des Befunds.
+- Blöcke mit gesetztem **OTP-Kennzeichen** werden als solche markiert.
+- Die **CVN** wird gerechnet und ausgewiesen, sofern die Konfigurationsstruktur gefunden
+  wird; sonst „nicht gefunden". Nur lesend.
+- Die **Steuergerätevariante** aus dem Dataset-Block (+0x78) wird ausgegeben.
+- `Table1`/`Table2` werden als Wortlisten ausgegeben, ohne Deutung; ebenso die acht
+  unerklärten Bytes bei +0x24.
 
 `SectorKind` bekommt die Werte `Bootloader` und `Dataset`. Geprüft: kein `switch`-Ausdruck
 im Core ist über `SectorKind` erschöpfend, das Hinzufügen ist gefahrlos.
@@ -578,6 +693,11 @@ public sealed record BoschIdentity(IReadOnlyList<IdentityHit> Hits)
     public static BoschIdentity? Scan(ReadOnlySpan<byte> data);
 }
 ```
+
+**Vorrang hat die feste Fundstelle.** Steht im Dataset-Block bei +0x78 ein Variantenstring
+(§B3), wird die Steuergerätevariante von dort genommen — mit `RegionConfidence.Confirmed`.
+Das freie Durchsuchen unten ist nur der Rückfall für Abbilder ohne lesbaren Dataset-Block
+und liefert nie mehr als `Strong`.
 
 Strenge Formen — lockeres Matchen hieße behaupten:
 
@@ -659,23 +779,33 @@ Zusicherungen, in der Handschrift von `OpaqueRegion_DoesNotClaimEncryptionAsFact
 8. `UnalignedBlockSize_IsAccepted` — Größe `0xFD04` wie Block 4; keine Sektorbündigkeitsprüfung (I5).
 9. `TableEntriesAreNotValidatedAsAddresses` — eine Tabelle mit `0xC0000070`, `0`, `0xFFFFFFFF` und `0xF7C` wird unverändert übernommen (F1).
 10. `TablePointerIntoOtherBank_ResolvesGlobally` — ein PMU0-Block mit `0x808084AC` in der Tabelle liest aus PMU1, nicht ins Leere (F2).
-11. `ChecksumStructureCount_IsReportedWithoutRegion` — der Zähler erscheint im Bericht, es entsteht **kein** markierter Bereich und keine Aussage über den Inhalt.
+11. `MissingDeadbeefMarker_RejectsBlock` — Regel I7; ein sonst tadelloser Kopf ohne `0xDEADBEEF` am Blockende wird verworfen.
 12. `BlockGaps_AreReportedWithoutInterpretation` — die sechs Lücken der Beispielkarte tauchen als Beobachtung auf, ohne Deutung.
-13. `Identifier_IsAsciiPaddedWithFF` — 18 Byte, `10SW008917` + `0xFF`-Füllung; die Form `\d{2}SW\d{6}` wird erkannt (I4).
-14. `BlocksAreGroupedBySoftwareUnit` — die drei Kennungen des Beispiels gruppieren die acht Blöcke wie dort.
-15. `TriCoreImage_WithoutChain_ClaimsNoVerifiedBlocks` — plausibler Code und Kennfelder, aber keine Kette → **kein** `SectorStatus.Verified`.
-16. `CalibrationCandidate_IsNotCalledCalibration` — `Kind == RegionKind.Data`, `Confidence != Confirmed`, Beschreibung enthält „Kandidat", nicht „Kalibrierungssektor".
-17. `TwoMegabyteImage_WithoutEcuString_DoesNotPickASingleMcu` — Mehrdeutigkeit TC1796 / TC1797-PMU0 wird gemeldet, nicht aufgelöst.
-18. `EcuTypeString_SelectsTheMatchingMcu` — `EDC17CP44` führt zur TC1797-Karte.
-19. `UnknownTriCoreDevice_ClaimsNoSectorMap` — `Generic`, `Complete == false`, `EraseSectors` leer, `SourceNote` sagt es.
-20. `TriCoreDflashTail_IsNotAutomaticallyEeprom` — direkte Entsprechung zu `RegionBeyondLargeFlash_IsNotAutomaticallyEeprom`.
-21. `DflashOnlyFile_IsNotMistakenForPflash` — 0x20000-Datei ohne Zeigerdichte → `Unknown`.
-22. `CachedAndUncachedAddresses_MapToTheSameOffset` — `0x80020000` und `0xA0020000` ergeben denselben Datei-Offset.
-23. `BoschIdentity_ReportsOffsets_NotJustValues`.
-24. `VagPartNumberCandidate_RequiresStrictShape` — beliebige 11 Ziffern werden nicht als VAG-Teilenummer gemeldet.
-25. `Detection_IsAmbiguous_WhenBothFamiliesScoreClose`.
-26. `TriCoreProfile_DoesNotOfferWriteBack` — `SupportsWriteBack == false`, `Save`/`RepairCrc`/`ReplaceSector` verweigern.
-27. `EmsImage_StillDetectedAfterTriCoreSupport` — Regression gegen Erkennungsschäden.
+13. `Crc32Algo_MatchesExpectedValue` — Bosch-CRC32 über einen bekannten Bereich mit Startwert `0xFADECAFE` ergibt `0x35015001`. Dazu die Gegenprobe `~0xCAFEAFFE == 0x35015001`.
+14. `Add32AndAdd16_MatchExpectedValue` — beide ergeben `0xCAFEAFFE`.
+15. `TamperedCalibration_YieldsCrcMismatch_NotVerified` — ein Byte im geprüften Bereich verändert → der Block bekommt `SectorStatus.CrcMismatch`, **nicht** `Verified`. Der wichtigste Fall überhaupt.
+16. `UnknownAlgorithmId_IsReportedNotGuessed` — ein `csAlgorithm` außerhalb {0x00, 0x01, 0x10} führt zu „unbekannt", nicht zu einem geratenen Verfahren.
+17. `ChecksumStructures_AreThirtyTwoBytesFromOffset34` — Positivkontrolle des Abgleichs aus §B5: bei 1 und bei 4 Strukturen landet das Prüfwort auf +0x54 bzw. +0xB4.
+18. `OtpFlag_IsReported` — Bit `0x00800000` wird als OTP ausgewiesen.
+19. `ScanAndChainWalk_AgreeOnTheSampleImage` — beide Suchverfahren liefern dieselben acht Blöcke; die Übereinstimmung erscheint als Beleg.
+20. `ChainBroken_ScanStillFindsBlocks` — bei gerissener Kette findet die Abtastung die Blöcke weiterhin, und die Abweichung wird gemeldet.
+21. `EcuVariantString_IsReadFromDatasetBlock` — `34/1/EDC17_C46/5/…` bei Dataset +0x78 ergibt `EDC17_C46` mit `Confirmed`.
+22. `CvnConfigNotFound_IsReportedAsNotFound` — kein Ratewert, keine Null.
+23. `SwIdentifier_IsTenBytesFollowedByEightUnknown` — `10SW008917` bei +0x1A, danach acht Bytes, die roh ausgewiesen und nicht gedeutet werden; die Form `\d{2}SW\d{6}` wird erkannt (I4).
+24. `BlocksAreGroupedBySoftwareUnit` — die drei Kennungen des Beispiels gruppieren die acht Blöcke wie dort.
+25. `TriCoreImage_WithoutChain_ClaimsNoVerifiedBlocks` — plausibler Code und Kennfelder, aber keine Kette → **kein** `SectorStatus.Verified`.
+26. `CalibrationCandidate_IsNotCalledCalibration` — `Kind == RegionKind.Data`, `Confidence != Confirmed`, Beschreibung enthält „Kandidat", nicht „Kalibrierungssektor".
+27. `TwoMegabyteImage_WithoutEcuString_DoesNotPickASingleMcu` — Mehrdeutigkeit TC1796 / TC1797-PMU0 wird gemeldet, nicht aufgelöst.
+28. `EcuTypeString_SelectsTheMatchingMcu` — `EDC17CP44` führt zur TC1797-Karte.
+29. `UnknownTriCoreDevice_ClaimsNoSectorMap` — `Generic`, `Complete == false`, `EraseSectors` leer, `SourceNote` sagt es.
+30. `TriCoreDflashTail_IsNotAutomaticallyEeprom` — direkte Entsprechung zu `RegionBeyondLargeFlash_IsNotAutomaticallyEeprom`.
+31. `DflashOnlyFile_IsNotMistakenForPflash` — 0x20000-Datei ohne Zeigerdichte → `Unknown`.
+32. `CachedAndUncachedAddresses_MapToTheSameOffset` — `0x80020000` und `0xA0020000` ergeben denselben Datei-Offset.
+33. `BoschIdentity_ReportsOffsets_NotJustValues`.
+34. `VagPartNumberCandidate_RequiresStrictShape` — beliebige 11 Ziffern werden nicht als VAG-Teilenummer gemeldet.
+35. `Detection_IsAmbiguous_WhenBothFamiliesScoreClose`.
+36. `TriCoreProfile_DoesNotOfferWriteBack` — `SupportsWriteBack == false`, `Save`/`RepairCrc`/`ReplaceSector` verweigern.
+37. `EmsImage_StillDetectedAfterTriCoreSupport` — Regression gegen Erkennungsschäden.
 
 **Echte Abbilder:** die synthetischen Dateien prüfen die Mechanik, nicht die Trefferquote
 in der Wirklichkeit. Vor der Veröffentlichung von Phase 4 mindestens je ein echtes
@@ -755,9 +885,10 @@ Das gehört in `CHANGELOG.md` und in den Befundtext.
 
 | Risiko | Gegenmaßnahme |
 | --- | --- |
-| Die Blockkopfstruktur stammt aus **einem** Abbild. Andere EDC17/MED17-Stände können abweichen. | Der Parser prüft die Struktur über I1–I3, statt sie vorauszusetzen; ohne gültige Kette gibt es keine Blöcke, nur Regionen. Das Werkzeug wird dadurch schlechter, nicht falsch. |
-| Herkunft der Formatkenntnis. | Nutzung ist freigegeben; das Vorbild-Repository trägt selbst keinen Lizenztext. Quelle wird in Quelltextkommentar und README genannt. Die beiden Fehler des Vorbilds (bankrelative Zeigerauflösung, abschneidende Puffergrenzen) werden nicht mitgenommen. |
-| Prüfsummenstrukturen sind unerforscht — Lage und Größe aus dem Beispiel nicht ableitbar. | Nur der Zähler wird gemeldet. Kein Bereich markiert, keine Deutung, keine Korrektur. |
+| Die Struktur stammt aus **einem** Abbild und zwei Werkzeugen. Andere EDC17/MED17-Stände können abweichen. | Der Parser prüft über I1–I7 und rechnet die Prüfsummen nach, statt etwas vorauszusetzen. Ohne gültigen Block gibt es keine Blöcke, nur Regionen. Das Werkzeug wird dadurch schlechter, nicht falsch. |
+| Herkunft der Formatkenntnis. | Nutzung ist freigegeben; beide Quellen werden in Quelltextkommentar und README genannt. Die zwei Fehler von Q1 (bankrelative Zeigerauflösung, abschneidende Puffergrenzen) werden nicht mitgenommen. |
+| Die Prüfsummen*korrektur* ist mit diesem Material technisch möglich, aber nicht Auftrag. | Bleibt außerhalb (§Nicht-Ziele). Die Prüfung ist davon unberührt und wird vollständig umgesetzt. |
+| Rechenaufwand: bitweise CRC32 über mehrere MiB. | Das Verfahren ist bitweise definiert; eine Tabellenvariante muss zeichengenau gleich rechnen, sonst wird sie nicht benutzt. Erst messen, dann optimieren. |
 | Mehrdeutigkeit bei 2 MiB (TC1796 gegen TC1797-PMU0). | Melden statt raten; auflösbar über Kennungsstring und Steuergerätetabelle. |
 | Falsch-positive Erkennung — ein EMS-Abbild enthält zufällig `0x80`-Muster. | TRW-Sonden punkten höher; die Zeigerdichte verlangt 4-Byte-Ausrichtung und eine Schwelle; bei knappem Vorsprung `Ambiguous` statt stiller Wahl. |
 | Regression im Volvo-Pfad durch die Umtypisierung von `Mpc5777cLayout`. | Phase 1 als reiner Umbau mit unveränderter Testmenge und genau einer geänderten Testzeile. |
@@ -769,8 +900,13 @@ Das gehört in `CHANGELOG.md` und in den Befundtext.
 **Nicht-Ziele**
 
 - Kein Schreiben, kein Prüfsummen-Korrigieren, kein Blockersatz für TriCore-Abbilder.
-- Keine Deutung oder Korrektur der Prüfsummenstrukturen.
-- Keine RSA-Signaturprüfung, erst recht keine Signaturerzeugung.
+  Prüfsummen werden **gerechnet und gemeldet**, nicht gestellt.
+- Keine CVN-Korrektur — die CVN wird gelesen und ausgewiesen.
+- **Keine Signaturfälschung.** Das Material beschreibt eine Bleichenbacher-Fälschung gegen
+  RSA mit e=3 für die 128-Byte-Signatur im Blockepilog. Sie wird nicht umgesetzt, weil sie
+  ausschließlich dem Umgehen einer Integritätsprüfung dient und für das Lesen und Zerlegen
+  eines Abbilds nichts beiträgt. Die Signatur wird als Bereich benannt, mehr nicht.
+- Kein GF(2)-Löser, keine `dCSAdjust`-Berechnung.
 - Kein Entpacken von FRF, ODX-F, SGO oder anderen Auslieferungscontainern; kein
   Entschlüsseln von irgendetwas.
 - Kein Seed/Key, keine OBD-/Bench-Kommunikation, kein Flashen.
