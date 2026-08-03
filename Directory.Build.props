@@ -1,0 +1,11 @@
+<Project>
+
+  <!-- Version und Produktangaben zentral, damit sie beim Release nur an einer
+       Stelle gepflegt werden müssen. -->
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <Product>Volvo File Splitter</Product>
+    <Company>ubbg</Company>
+  </PropertyGroup>
+
+</Project>
