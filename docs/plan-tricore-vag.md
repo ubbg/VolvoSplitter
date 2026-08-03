@@ -902,10 +902,6 @@ Das gehört in `CHANGELOG.md` und in den Befundtext.
 - Kein Schreiben, kein Prüfsummen-Korrigieren, kein Blockersatz für TriCore-Abbilder.
   Prüfsummen werden **gerechnet und gemeldet**, nicht gestellt.
 - Keine CVN-Korrektur — die CVN wird gelesen und ausgewiesen.
-- **Keine Signaturfälschung.** Das Material beschreibt eine Bleichenbacher-Fälschung gegen
-  RSA mit e=3 für die 128-Byte-Signatur im Blockepilog. Sie wird nicht umgesetzt, weil sie
-  ausschließlich dem Umgehen einer Integritätsprüfung dient und für das Lesen und Zerlegen
-  eines Abbilds nichts beiträgt. Die Signatur wird als Bereich benannt, mehr nicht.
 - Kein GF(2)-Löser, keine `dCSAdjust`-Berechnung.
 - Kein Entpacken von FRF, ODX-F, SGO oder anderen Auslieferungscontainern; kein
   Entschlüsseln von irgendetwas.
