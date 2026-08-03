@@ -102,10 +102,11 @@ public sealed class FlashMap : FrameworkElement
         var chip = new Rect(bandLeft, top, BandWidth, height);
         dc.DrawRectangle(erased, null, chip);
 
-        // 1-MiB-Raster — Gitter, nicht Inhalt: nur eine Spur heller als der Grund.
+        // Adressraster — Gitter, nicht Inhalt: nur eine Spur heller als der Grund.
         var gridPen = new Pen(new SolidColorBrush(Color.FromRgb(0x21, 0x29, 0x33)), 1);
         gridPen.Freeze();
-        for (long address = 0x100000; address < ImageSize; address += 0x100000)
+        long step = GridStep(ImageSize);
+        for (long address = step; address < ImageSize; address += step)
         {
             double y = Snap(top + height * address / (double)ImageSize);
             dc.DrawLine(gridPen, new Point(bandLeft, y), new Point(bandLeft + BandWidth, y));
@@ -157,7 +158,7 @@ public sealed class FlashMap : FrameworkElement
 
             // Adresse links neben dem Band, solange sie nicht mit der vorigen
             // kollidiert. Beim hervorgehobenen Sektor immer.
-            var label = Label($"0x{sector.Start:X6}", active ? text : muted, 10);
+            var label = Label(Hex.Addr(sector.Start), active ? text : muted, 10);
             double labelTop = band.Top + band.Height / 2 - label.Height / 2;
 
             if (active || labelTop > lastLabelBottom + 2)
@@ -181,7 +182,7 @@ public sealed class FlashMap : FrameworkElement
         var start = Label("0x000000", muted, 9);
         dc.DrawText(start, new Point(bandLeft + BandWidth - start.Width, top - start.Height - 4));
 
-        var stop = Label($"0x{ImageSize:X6}", muted, 9);
+        var stop = Label(Hex.Addr(ImageSize), muted, 9);
         dc.DrawText(stop, new Point(bandLeft + BandWidth - stop.Width, top + height + 4));
 
         // Beschriftung: wie viel des Bausteins überhaupt belegt ist.
@@ -195,6 +196,21 @@ public sealed class FlashMap : FrameworkElement
     }
 
     private static double Snap(double value) => Math.Round(value) + 0.5;
+
+    /// <summary>
+    /// Rasterweite aus der Abbildgröße: eine Zweierpotenz, die auf acht bis
+    /// sechzehn Linien führt. Ein festes 1-MiB-Raster ergab bei einem 8-MiB-
+    /// TriCore-Abbild sieben Linien und bei 128 KiB gar keine.
+    /// </summary>
+    private static long GridStep(long imageSize)
+    {
+        const long Min = 0x10000;
+        const long Max = 0x100000;
+
+        long step = Min;
+        while (step < Max && imageSize / step > 16) step <<= 1;
+        return step;
+    }
 
     /// <summary>
     /// Gedeckte Töne je Art des Bereichs — hell genug zum Unterscheiden, dunkel

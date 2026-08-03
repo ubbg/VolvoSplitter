@@ -7,3 +7,8 @@ dist/
 .idea/
 .vs/
 *.user
+
+# Echte Steuergeräte-Abbilder zur Gegenprüfung. Sie enthalten eine VIN und
+# gehören deshalb nicht ins Repository — die Tests kommen ohne sie aus.
+fixtures/
+*.ori

@@ -4,7 +4,11 @@
        Stelle gepflegt werden müssen. -->
   <PropertyGroup>
     <Version>1.0.0</Version>
-    <Product>Volvo File Splitter</Product>
+    <!-- Nutzersichtbarer Produktname. Namensraum, Assembly- und Repository-Name
+         bleiben bewusst bei „VolvoSplitter": v1.0.0 ist mit Release-Artefakten
+         veröffentlicht, und eine Umbenennung bräche jede Verknüpfung und jedes
+         Nutzerskript — für null Funktionsgewinn. -->
+    <Product>Flash File Splitter</Product>
     <Company>ubbg</Company>
     <Copyright>Copyright (c) 2026 ubbg</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

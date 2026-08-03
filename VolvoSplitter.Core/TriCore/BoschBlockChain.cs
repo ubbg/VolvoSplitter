@@ -743,6 +743,7 @@ public static class BoschBlockChain
                 Length = block.Size,
                 CrcStored = any is null ? 0 : BoschChecksum.Expected(any.Algorithm, any.ExpectedValue) ?? 0,
                 CrcComputed = any?.Computed ?? 0,
+                Writable = false,
                 HeaderFields = DescribeHeader(block)
             });
         }
