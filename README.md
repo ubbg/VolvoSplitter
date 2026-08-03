@@ -519,3 +519,13 @@ Im Repository liegen die NXP-Dokumente, auf denen die Interpretation beruht:
 ## Änderungen
 
 Siehe [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Lizenz
+
+[MIT](LICENSE) — © 2026 ubbg. Die Software wird ohne Gewähr bereitgestellt.
+
+Ausgenommen sind die NXP-Dokumente im Repository (`AN4868.pdf`, `MPC5777CFS.pdf`,
+`MPC5777CRM, MPC5777C Reference Manual.pdf`): sie stammen von NXP Semiconductors, unterliegen
+deren Bedingungen und werden von der MIT-Lizenz nicht erfasst.
