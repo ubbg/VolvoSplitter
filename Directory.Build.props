@@ -3,7 +3,7 @@
   <!-- Version und Produktangaben zentral, damit sie beim Release nur an einer
        Stelle gepflegt werden müssen. -->
   <PropertyGroup>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <!-- Nutzersichtbarer Produktname. Namensraum, Assembly- und Repository-Name
          bleiben bewusst bei „VolvoSplitter": v1.0.0 ist mit Release-Artefakten
          veröffentlicht, und eine Umbenennung bräche jede Verknüpfung und jedes

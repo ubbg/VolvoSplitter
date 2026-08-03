@@ -3,7 +3,7 @@
 Das Format folgt lose [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
-## Unveröffentlicht
+## v1.1.1
 
 ### ADD16 vollständig geklärt
 
