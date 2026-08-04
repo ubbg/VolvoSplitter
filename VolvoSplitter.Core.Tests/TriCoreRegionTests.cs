@@ -26,54 +26,42 @@ public class TriCoreRegionTests
     }
 
     [Fact]
-    public void CalibrationCandidate_IsNotCalledCalibration()
+    public void CalibrationShapedData_GetsNoTitleOfItsOwn()
     {
-        // Entropie im Datenband, Mindestgröße, monotone Fenster und Beginn auf
-        // einer Löschsektorgrenze — mehr sagt das Abbild nicht her. Also heißt
-        // es „Kandidat", nicht „Kalibrierungssektor".
+        // Alle vier Merkmale des früheren „Kalibrierungskandidaten" liegen vor:
+        // Bosch-Container, 256 KiB, Entropie im Datenband, Beginn auf einer
+        // Löschsektorgrenze, und der Monotonieanteil dieses synthetischen
+        // Blocks liegt über 0,9. Trotzdem bleibt es schlicht „Daten".
+        //
+        // Die Einordnung ist gestrichen, weil sie an echten Abbildern nie
+        // greift und auch nicht greifen kann: über 1516 VAG-EDC17-Abbilder
+        // erreicht der Monotonieanteil höchstens 0,0292 — und zwar in den
+        // Dataset-Blöcken, in denen die Kalibrierdaten wirklich liegen, während
+        // die kopflosen Restbereiche schon 0,0220 erreichen. Die beiden Mengen
+        // überlappen, es gibt also keine trennende Schwelle. Eine Einordnung,
+        // die nur auf synthetischen Rampen anspricht, verspricht im Bericht
+        // etwas, das es nicht gibt.
         var dump = WithoutChain((0x040000, TriCoreDump.CalibrationBlock(0x40000)));
 
         Assert.Equal("TC1797", dump.Profile.MicroName);
+        Assert.True(dump.Layout!.IsEraseSectorStart(0x040000));
+        Assert.True(BinaryHeuristics.MonotonicRunRatio(
+            TriCoreDump.CalibrationBlock(0x40000), 0, 0x40000) > 0.9);
 
         var region = Assert.Single(dump.Regions, r => r.Start == 0x040000);
 
         Assert.Equal(RegionKind.Data, region.Kind);
-        Assert.NotEqual(RegionConfidence.Confirmed, region.Confidence);
-        Assert.Contains("Kalibrierungskandidat", region.Label);
-        Assert.DoesNotContain("Kalibrierungssektor", region.Label);
-        Assert.DoesNotContain("Kalibrierungssektor", region.Description);
-        Assert.Contains("nicht als Kalibrierung belegt", region.Description);
-    }
-
-    [Fact]
-    public void CalibrationLikeDataOffSectorBoundary_StaysPlainData()
-    {
-        // Derselbe Inhalt, aber nicht auf einer Löschsektorgrenze: dann fehlt
-        // ein Merkmal, und es bleibt schlicht „Daten".
-        var dump = WithoutChain((0x044000, TriCoreDump.CalibrationBlock(0x40000)));
-
-        var region = Assert.Single(dump.Regions, r => r.Start == 0x044000);
-
-        Assert.Equal(RegionKind.Data, region.Kind);
+        Assert.Null(region.Title);
         Assert.Equal("Daten", region.Label);
-        Assert.DoesNotContain("Kalibrierungskandidat", region.Label);
+        Assert.DoesNotContain("Kalibrierung", region.Description);
     }
 
     [Fact]
-    public void ShortCalibrationLikeRegion_StaysPlainData()
+    public void UnknownDevice_HasNoEraseSectorMap()
     {
-        // Auf der Grenze, aber unter 128 KiB.
-        var dump = WithoutChain((0x040000, TriCoreDump.CalibrationBlock(0x10000)));
-
-        var region = Assert.Single(dump.Regions, r => r.Start == 0x040000);
-        Assert.Equal("Daten", region.Label);
-    }
-
-    [Fact]
-    public void NoCalibrationCandidateWithoutAKnownSectorMap()
-    {
-        // Ohne bestimmten Baustein gibt es keine Löschsektorgrenzen — und damit
-        // auch keinen Kandidaten. Lieber eine Aussage weniger.
+        // Ohne bestimmten Baustein gibt es keine Löschsektorgrenzen. Der
+        // Bereich wird trotzdem eingeordnet — nur eben ohne Aussage, die sich
+        // auf die Sektorkarte stützt.
         var dump = FlashDump.FromBytes(TriCoreDump.Pflash(TwoMib,
             (0x100000, TriCoreDump.CodeBlock(0x40000, 0x80000000)),
             (0x040000, TriCoreDump.CalibrationBlock(0x40000))), "unbestimmt.bin");

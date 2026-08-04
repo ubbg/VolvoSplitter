@@ -32,6 +32,50 @@ public static class BinaryHeuristics
     }
 
     /// <summary>
+    /// Häufigstes Byte des Bereichs und wie oft es vorkommt. Ist die Anzahl
+    /// gleich der Länge, ist der Bereich konstant.
+    ///
+    /// Das ist genau die Aussage, die eine niedrige Entropie <em>nicht</em>
+    /// liefert: 1,4 MiB aus 0x00 mit 500 abweichenden Bytes bleiben unter
+    /// 0,5 Bit je Byte und sind trotzdem nicht konstant.
+    /// </summary>
+    public static (byte Value, long Count) DominantByte(byte[] data, long start, long length)
+    {
+        if (length <= 0) return (0, 0);
+
+        var histogram = new long[256];
+        for (long i = 0; i < length; i++) histogram[data[start + i]]++;
+
+        byte best = 0;
+        for (int value = 1; value < 256; value++)
+            if (histogram[value] > histogram[best]) best = (byte)value;
+
+        return (best, histogram[best]);
+    }
+
+    /// <summary>Druckbares ASCII — der Bereich, in dem Zeichenketten stehen.</summary>
+    private static bool IsPrintable(byte b) => b is >= 0x20 and < 0x7F;
+
+    /// <summary>
+    /// Der zusammenhängende druckbare ASCII-Lauf, in dem <paramref name="at"/>
+    /// liegt, als Halboffenintervall. Steht dort kein druckbares Byte, ist das
+    /// Ergebnis leer.
+    ///
+    /// Damit lässt sich ein Textfund von einem Zufallstreffer trennen: eine
+    /// kurze Bytefolge kommt in mehreren MiB Binärdaten zwangsläufig vor, ein
+    /// Fund <em>innerhalb einer Zeichenkette</em> nicht.
+    /// </summary>
+    public static (int From, int To) PrintableRun(ReadOnlySpan<byte> window, int at)
+    {
+        if (at < 0 || at >= window.Length || !IsPrintable(window[at])) return (at, at);
+
+        int from = at, to = at + 1;
+        while (from > 0 && IsPrintable(window[from - 1])) from--;
+        while (to < window.Length && IsPrintable(window[to])) to++;
+        return (from, to);
+    }
+
+    /// <summary>
     /// Anteil wiederkehrender 16-Byte-Blöcke. Compilierter Code wiederholt sich
     /// stark, Chiffretext praktisch nie. Gemessen wird ein zusammenhängendes
     /// Fenster von höchstens 1 MiB — gestreute Stichproben zerstören genau die

@@ -172,7 +172,7 @@ public static class RegionScanner
                                         EcuProfile? profile)
     {
         var partition = layout?.PartitionAt(start);
-        var region = Classify(data, start, length, sectors, partition, layout, profile);
+        var region = Classify(data, start, length, sectors, partition, profile);
 
         // Ohne Layout lässt sich über einen Anhang hinter dem Flash-Baustein
         // nichts Belastbares sagen — der Inhalt wird trotzdem eingeordnet.
@@ -192,7 +192,7 @@ public static class RegionScanner
 
     private static FlashRegion Classify(byte[] data, long start, long length,
                                         IReadOnlyList<SectorInfo> sectors, FlashPartition? partition,
-                                        PhysicalLayout? layout, EcuProfile? profile)
+                                        EcuProfile? profile)
     {
         // 1. Ausführbares VOLVOECU-Modul — eigener Kopf, eigene CRC über den
         //    ganzen Block. Das ist kein EEPROM-Datensatz. Nur im TRW-Zweig:
@@ -208,7 +208,7 @@ public static class RegionScanner
 
         double entropy = BinaryHeuristics.Entropy(data, start, length);
         double duplicates = BinaryHeuristics.DuplicateRatio(data, start, length);
-        bool sourcePaths = ContainsSourcePaths(data, start, length);
+        string? sourcePath = FindSourcePath(data, start, length);
 
         // 2. Laufzeitveränderte NVM-Daten. Nur dort, wo das Steuergerät die
         //    EEPROM-Emulation überhaupt betreibt.
@@ -220,16 +220,39 @@ public static class RegionScanner
                 Confidence = RegionConfidence.Strong
             };
 
+        // Entropie unter 0,5 heißt „stark ungleichverteilt", nicht „konstant" —
+        // die Konstanz wird deshalb an den Bytes geprüft und nicht aus der
+        // Entropie gefolgert. Benannt wird das häufigste Byte, nicht das erste:
+        // im VAG-Bestand traf data[start] zehnmal einen Ausreißer, fünfmal
+        // einen, der im ganzen Bereich genau einmal vorkam (gemeldet war
+        // „0x1D", der Bereich bestand zu 99,94 % aus 0x00).
         if (entropy < 0.5)
+        {
+            var (fill, count) = BinaryHeuristics.DominantByte(data, start, length);
+            bool constant = count == length;
+
             return new FlashRegion(start, length, RegionKind.Data,
-                $"Konstantes Füllbyte 0x{data[start]:X2}", entropy)
+                constant
+                    ? $"Konstantes Füllbyte 0x{fill:X2}"
+                    : $"Überwiegend 0x{fill:X2} ({(double)count / length:P2}), " +
+                      $"{length - count:N0} abweichende Bytes",
+                entropy)
             {
-                Confidence = RegionConfidence.Confirmed
+                // „gesichert" trägt nur die nachgerechnete Konstanz. Sonst ist
+                // es eine Beobachtung: die abweichenden Bytes sind belegt, und
+                // was sie bedeuten, sagt dieser Bereich nicht.
+                Confidence = constant ? RegionConfidence.Confirmed : RegionConfidence.Strong
             };
+        }
 
         // Hohe Entropie ist eine Beobachtung, kein Nachweis: Chiffretext,
         // komprimierte Daten und signierte Container sehen gleich aus.
-        if (entropy >= 7.9 && !sourcePaths)
+        //
+        // Ein Textfund hebelt das nicht mehr aus: „Entropie 8,00" und
+        // „Programmcode im Klartext" schließen einander aus. Steht in einem
+        // solchen Bereich wirklich eine Zeichenkette, ist sie ein Bruchteil
+        // davon — und „opak" bleibt die ehrlichere Aussage über das Ganze.
+        if (entropy >= 7.9)
             return new FlashRegion(start, length, RegionKind.Opaque,
                 $"Entropie {entropy:0.00}, kein bekannter Kopf — Format unbekannt; " +
                 "Verschlüsselung oder Kompression möglich, aber nicht belegt", entropy)
@@ -239,59 +262,19 @@ public static class RegionScanner
 
         // Wiederkehrende Muster allein reichen nicht: Tabellen wiederholen sich
         // noch stärker als Code, haben aber deutlich weniger Entropie.
-        if (sourcePaths || (duplicates > 0.02 && entropy >= 4.5))
+        if (sourcePath is not null || (duplicates > 0.02 && entropy >= 4.5))
             return new FlashRegion(start, length, RegionKind.Code,
-                sourcePaths
-                    ? $"Entropie {entropy:0.00}, enthält Quelldateipfade — Programmcode im Klartext"
+                sourcePath is not null
+                    ? $"Entropie {entropy:0.00}, enthält Quelldateipfad »{sourcePath}« — Programmcode im Klartext"
                     : $"Entropie {entropy:0.00}, {duplicates:P0} wiederkehrende Befehlsmuster — Programmcode",
                 entropy)
             {
-                Confidence = sourcePaths ? RegionConfidence.Confirmed : RegionConfidence.Strong
-            };
-
-        // 3. Kalibrierungskandidat. Die Art bleibt „Daten" — ein eigener
-        //    RegionKind wäre eine Behauptung im Typsystem. Nur der Titel wird
-        //    genauer, und nur wenn alle vier Merkmale zusammenkommen.
-        if (LooksLikeCalibration(data, start, length, entropy, layout, profile) is { } ratio)
-            return new FlashRegion(start, length, RegionKind.Data,
-                $"Entropie {entropy:0.00}, {ratio:P0} monotone Fenster, beginnt auf einer " +
-                "Löschsektorgrenze — passt zu Kennfeldern, ist aber nicht als Kalibrierung belegt",
-                entropy)
-            {
-                Title = "Datenbereich — Kalibrierungskandidat",
-                Confidence = RegionConfidence.Strong
+                Confidence = sourcePath is not null ? RegionConfidence.Confirmed : RegionConfidence.Strong
             };
 
         return new FlashRegion(start, length, RegionKind.Data,
             $"Entropie {entropy:0.00}, {duplicates:P0} wiederkehrende Blöcke — Daten ohne Sektorkopf",
             entropy);
-    }
-
-    /// <summary>Kleinster Bereich, der als Kalibrierungskandidat in Frage kommt.</summary>
-    private const long MinCalibrationLength = 0x20000;   // 128 KiB
-
-    /// <summary>Anteil monotoner Fenster, ab dem Kennfeldachsen plausibel sind.</summary>
-    private const double CalibrationMonotonicThreshold = 0.35;
-
-    /// <summary>
-    /// Vier Merkmale müssen zusammenkommen: Entropie im Datenband, Mindestgröße,
-    /// genügend monotone Fenster und Beginn auf einer Löschsektorgrenze. Trifft
-    /// nur ein Teil zu, bleibt es schlicht „Daten".
-    ///
-    /// Auch bei vollem Treffer heißt das Ergebnis <em>Kandidat</em>. Ohne A2L
-    /// oder DAMOS lässt sich ein Kalibrierbereich aus dem Abbild allein nicht
-    /// belegen.
-    /// </summary>
-    private static double? LooksLikeCalibration(byte[] data, long start, long length, double entropy,
-                                                PhysicalLayout? layout, EcuProfile? profile)
-    {
-        if (profile is not { Container: ContainerKind.BoschBlockChain }) return null;
-        if (length < MinCalibrationLength) return null;
-        if (entropy is < 3.0 or > 5.5) return null;
-        if (layout is null || !layout.IsEraseSectorStart(start)) return null;
-
-        double ratio = BinaryHeuristics.MonotonicRunRatio(data, start, length);
-        return ratio >= CalibrationMonotonicThreshold ? ratio : null;
     }
 
     private static string VolvoEcuDescription(VolvoEcuBlock ecu)
@@ -373,18 +356,65 @@ public static class RegionScanner
     }
 
     /// <summary>
+    /// Kürzester druckbarer ASCII-Lauf, der einen Nadeltreffer noch als Text
+    /// gelten lässt.
+    ///
+    /// Gerechnet: 95 der 256 Bytewerte sind druckbar, also hat ein Lauf von 16
+    /// in gleichverteilten Daten die Wahrscheinlichkeit (95/256)^16 ≈ 1,3·10⁻⁷ —
+    /// unter einem erwarteten Treffer je 4 MiB. Gemessen: über 1516 echte
+    /// VAG-EDC17-Abbilder ist der längste druckbare Lauf, der eine der drei
+    /// Nadeln enthält, 8 Byte lang (»VV=VV../«) — kein einziger Zufallstreffer
+    /// kommt der Schwelle nahe. Ein echter Pfad wie »../src/appl/main.c« hat 18.
+    /// </summary>
+    private const int MinPathRun = 16;
+
+    /// <summary>So viel Fundtext steht im Bericht; mehr sprengt die Spalte.</summary>
+    private const int PathSampleLen = 48;
+
+    /// <summary>
     /// Assert-Strings mit Quelldateipfaden verraten unverschlüsselten Code.
     /// <c>@(#)</c> ist die SCCS-Kennung, die in Bosch-Ständen üblich ist und
-    /// dieselbe Aussage trägt.
+    /// dieselbe Aussage trägt. Liefert den gefundenen Text, damit der Bericht
+    /// den Beleg zeigen kann statt ihn zu behaupten.
+    ///
+    /// Entscheidend ist nicht die Nadel, sondern dass sie <em>in einer
+    /// Zeichenkette</em> steht: drei Bytes kommen in mehreren MiB Binärdaten
+    /// zwangsläufig vor. Über 1516 VAG-EDC17-Abbilder war das fünfmal der Fall
+    /// und fünfmal falsch — viermal in einem Bereich mit Entropie 8,00, also
+    /// mitten im Rauschen. »src/« und »@(#)« kommen dort in keinem einzigen
+    /// Abbild vor; ausgelöst hat also ausschließlich der Zufallstreffer.
     /// </summary>
-    private static bool ContainsSourcePaths(byte[] data, long start, long length)
+    private static string? FindSourcePath(byte[] data, long start, long length)
     {
         // Der gesamte Bereich, nicht nur der Anfang: im EMS2.3-ASW steht der
         // erste Pfad erst 580 KB nach Bereichsbeginn.
         var window = data.AsSpan((int)start, (int)length);
 
-        return window.IndexOf("src/"u8) >= 0
-            || window.IndexOf("../"u8) >= 0
-            || window.IndexOf("@(#)"u8) >= 0;
+        return FindInText(window, "src/"u8)
+            ?? FindInText(window, "../"u8)
+            ?? FindInText(window, "@(#)"u8);
+    }
+
+    /// <summary>
+    /// Erster Treffer der Nadel, der in einem hinreichend langen druckbaren Lauf
+    /// steht — als Text. Gesucht wird über alle Vorkommen: der erste kann
+    /// Zufall sein, während ein späterer im echten Textblock liegt.
+    /// </summary>
+    private static string? FindInText(ReadOnlySpan<byte> window, ReadOnlySpan<byte> needle)
+    {
+        int cursor = 0;
+        while (cursor < window.Length)
+        {
+            int hit = window[cursor..].IndexOf(needle);
+            if (hit < 0) return null;
+
+            int at = cursor + hit;
+            var (from, to) = BinaryHeuristics.PrintableRun(window, at);
+            if (to - from >= MinPathRun)
+                return Encoding.ASCII.GetString(window[from..Math.Min(to, from + PathSampleLen)]);
+
+            cursor = at + 1;
+        }
+        return null;
     }
 }
