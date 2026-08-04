@@ -113,6 +113,38 @@ public class DumpReportTests
         Assert.Equal(expected, DumpReport.Extension(format));
 
     [Fact]
+    public void BlockWithoutStampedAdjustWord_IsExplainedNotAccused()
+    {
+        // Startup-Block des Beispielabbilds: der geprüfte Bereich seiner ersten
+        // Struktur wird auf den Blockanfang gezogen — dann schließt er den
+        // eigenen Kopf und damit das Stellwort ein, so wie in echten Abbildern —,
+        // und das Stellwort steht auf dem Füllmuster 0xAF.
+        const long StartupFile = 0x018000;
+        const uint StartupCpu = 0x80018000;
+
+        var image = TriCoreDump.SampleMed17Image();
+        TestDump.WriteLe(image, StartupFile + BoschBlockChain.HeaderSize + 0x04, StartupCpu);
+        TestDump.WriteLe(image, StartupFile + BoschBlockChain.ChecksumAdjustOffset,
+                         BoschBlockChain.AdjustFillAf);
+
+        var dump = FlashDump.FromBytes(image, "ungestellt.mpc");
+        var sector = Assert.Single(dump.Sectors, s => s.Start == StartupFile);
+
+        Assert.Equal(SectorStatus.ChecksumNotStamped, sector.Status);
+
+        // In allen drei Formaten steht der Grund, und keines behauptet eine
+        // Abweichung: „!=" wäre genau diese Behauptung.
+        foreach (var format in Enum.GetValues<ReportFormat>())
+        {
+            string report = DumpReport.Build(dump, format);
+
+            Assert.Contains("nicht gestellt", report);
+            Assert.Contains("0xAFAFAFAF", report);
+            Assert.DoesNotContain("!=", report);
+        }
+    }
+
+    [Fact]
     public void ImageWithoutChainOrIdentity_StillYieldsEveryFormat()
     {
         // Ein Abbild ohne Blockkette, ohne Kennungen, ohne Layout. Erwartet wird

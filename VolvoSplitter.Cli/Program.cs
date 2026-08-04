@@ -111,7 +111,17 @@ static void Process(string path, bool fixedOnly, string? outRoot, string? profil
     foreach (var sector in dump.Sectors.Where(s => s.Present))
     {
         string outPath = dump.ExtractSector(sector, targetDir);
-        string flag = sector.CrcOk ? "ok  " : "CRC!";
+
+        // Drei Zustände, drei Marken — alle vierstellig, damit die Spalten
+        // dahinter stehen bleiben. „n.g." heißt „nicht gestellt": für diesen
+        // Block wurde nie eine Prüfsumme gestellt, es weicht also nichts ab.
+        // Der Befund daneben schreibt es aus.
+        string flag = sector.Status switch
+        {
+            SectorStatus.Verified => "ok  ",
+            SectorStatus.ChecksumNotStamped => "n.g.",
+            _ => "CRC!"
+        };
         Console.WriteLine($"   {flag}  {sector.Label,-28} {sector.PartNumber,-12} " +
                           $"{sector.SizeText,12}  ->  {Path.GetFileName(outPath)}");
     }

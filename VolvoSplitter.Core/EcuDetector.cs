@@ -203,12 +203,20 @@ public static class EcuDetector
             evidence.Add($"{chain.Blocks.Count} Bosch-Blockkopf/-köpfe bestätigt " +
                          $"(blockEnd-Regel und 0x{BoschBlockChain.EndMarker:X8} am Blockende)");
 
-            int verified = chain.Blocks.Count(b => b.ChecksumsComputed && !b.ChecksumMismatch);
+            // Ein Block ohne gestelltes Stellwort zählt hier nicht mit: er ist
+            // nicht bestätigt, sondern ungeprüft. Ihn mitzuzählen hieße, die
+            // Erkennung auf eine Rechnung zu stützen, die nicht aufgehen kann.
+            int verified = chain.Blocks.Count(b => b.ChecksumsVerified);
             if (verified > 0)
             {
                 score += 80;
                 evidence.Add($"{verified} Block/Blöcke mit rechnerisch bestätigter Prüfsumme");
             }
+
+            int unstamped = chain.Blocks.Count(b => b.ChecksumNotStamped);
+            if (unstamped > 0)
+                evidence.Add($"{unstamped} Block/Blöcke ohne gestellte Prüfsumme — das Stellwort " +
+                             "steht auf dem Füllmuster, die Rechnung kann nicht aufgehen");
         }
 
         // Was der Kettenleser unterwegs gesehen hat, gehört in dieselbe Belegliste.
