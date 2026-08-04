@@ -3,7 +3,7 @@
 Das Format folgt lose [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
-## Unveröffentlicht
+## v1.3.0
 
 > Die Zahlen der folgenden Abschnitte sind an **1516 echten VAG-EDC17-Abbildern** gemessen, nicht
 > geschätzt. Dieser Bestand ist privat und liegt dem Repository **nicht** bei; im Repository liegen
