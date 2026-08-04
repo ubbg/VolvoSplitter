@@ -157,6 +157,13 @@ public sealed record TriCoreDevice(string Name, IReadOnlyList<FlashBank> Program
     /// Ohne Sektorkarte: welcher Baustein das ist, bleibt damit offen — die
     /// Bankaufteilung ist gemessen, der Baustein nicht.
     ///
+    /// <strong>Sie trägt auch den gemessenen Nullpunkt.</strong> Ein Blockkopf
+    /// sagt, bei welcher CPU-Adresse das Abbild anfängt, und sonst nichts —
+    /// über Bänke dahinter behauptet er nichts. Diese Aufteilung ist die
+    /// einzige, die das ebenfalls nicht tut, und deshalb die richtige Trägerin
+    /// für eine Teilauslesung (siehe <c>windowStart</c> in
+    /// <see cref="TriCoreLayout.For"/>).
+    ///
     /// <strong>Zweite Quelle.</strong> Eine unabhängige Analyse derselben
     /// Abbilder nennt dieselben zwei Formen „Familie A“ (Single-Bank,
     /// Datei = Adresse − 0x80000000) und „Familie B“ (Dual-Bank, obere Bank
@@ -169,7 +176,7 @@ public sealed record TriCoreDevice(string Name, IReadOnlyList<FlashBank> Program
     /// </summary>
     public static TriCoreDevice LinearProgramFlash =>
         new("TriCore mit durchgehendem PFLASH", [], null, ExternalBase,
-            "Durchgehender Programmflash ab 0x80000000 — am Abbild gemessen, " +
+            "Durchgehender Programmflash ohne Banksprung — am Abbild gemessen, " +
             "Baustein und Sektoreinteilung bleiben offen");
 
     /// <summary>Benannter Baustein ohne Sektorkarte.</summary>

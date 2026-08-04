@@ -5,6 +5,65 @@ die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
 ## Unveröffentlicht
 
+### Der Nullpunkt eines Abbilds wird gemessen, nicht gesetzt
+
+Datei-Offset 0 lag bedingungslos auf `0x80000000`. Damit hing jede Kopfprüfung an einer
+Annahme, die nie geprüft wurde — und **225 von 1516** echten VAG-EDC17-Abbildern verloren
+dadurch *sämtliche* Blöcke, obwohl jeder ihrer Blockköpfe seine Lage selbst nennt
+(`blockStart = blockEnd − size + 4`). Betroffen war alles, was nicht an der PFLASH-Basis
+beginnt: Teilauslesungen ab `0x80180000`, reine PMU1-Abzüge ab `0x80800000`, herausgelöste
+Einzelblöcke.
+
+`BoschBlockChain.MeasureWindowStarts` sucht Kopfkandidaten jetzt **layoutfrei** — nur mit den
+Regeln, die ohne Basis auskommen — und leitet aus ihnen die CPU-Adresse des Datei-Offsets 0 ab.
+Die Kandidaten laufen als weitere Layout-Kandidaten durch dieselbe Zählung bestätigter Köpfe,
+mit der schon die Bankaufteilung entschieden wird; `TriCoreLayout.For` nimmt den Nullpunkt als
+`windowStart` entgegen, ohne Angabe gilt weiterhin der Anfang des Bausteins.
+
+Zwei Sperren gegen den Zufallstreffer, beide nachgemessen:
+
+* Eine gemessene Basis muss die Vorgabe **echt schlagen**, nicht bloß einholen. Ein Kopf
+  bestätigt die aus ihm selbst abgeleitete Basis zwangsläufig — Gleichstand ist deshalb kein
+  Beleg. Die naive Fassung mit einer gemeinsamen Rangliste ließ zwei EDC17CP74-Abbilder von
+  einem Block auf null fallen.
+* Ein Fensteranfang, der in keiner Bank des Bausteins liegt, wird nicht stillschweigend auf die
+  nächste Bank aufgerundet, sondern als eine Partition ohne Bankgliederung ausgewiesen.
+
+Am Bestand: **243 → 2** Abbilder ohne Blöcke, **7 826 → 8 441** Blöcke, **kein einziges**
+vorher gelesenes Abbild verschlechtert. Alle 8 441 herausgelösten Sektordateien beginnen mit
+einer bekannten Blockart, tragen die Länge aus ihrem Größenfeld, enden auf `0xDEADBEEF` und
+sind byteweise im Quellabbild enthalten; 8 362 tragen eine nachgerechnete, aufgehende
+Prüfsumme (vorher 7 800).
+
+Nebenwirkung mitbehoben: der Bericht wies für eine Teilauslesung `0x000000–0x080000 →
+0x80000000–0x80080000` aus — eine Aussage, der der Blockkopf im selben Abbild widersprach.
+
+### Ein unlesbares Kennungsfeld verwirft den Blockkopf nicht mehr
+
+`swIdentifier` war die achte Regel der Kopfprüfung: ein einziges Byte außerhalb des
+Textbereichs ließ den ganzen Kopf durchfallen, obwohl `0xDEADBEEF`, `blockEnd`, Größe und
+Strukturzahl längst zutrafen. 25 Abbilder des Bestands füllen das Feld mit `0xAF` und verloren
+dadurch zusammen **123 Blöcke**, 14 davon restlos alle.
+
+Ein unlesbares Kennungsfeld ist eine **fehlende Kennung**, kein ungültiger Kopf: es wird gelesen
+statt geprüft und ergibt dann die leere Kennung. `0xAF` als drittes Füllbyte zu benennen wäre
+dagegen nicht gedeckt — der Wert kommt in keiner der ausgewerteten Unterlagen als
+Bosch-Wächterwert vor, er steht nur in diesen Abbildern. Gelesen wird alles oder nichts; aus
+Binärrauschen den druckbaren Teil herauszuklauben erfände eine Teilenummer.
+
+### „Nichts gefunden“ und „nicht verstanden“ sind zwei verschiedene Aussagen
+
+Die Belegliste des Kettenlesers wurde vollständig gerechnet und dann weggeworfen: `ProbeTriCore`
+übernahm aus dem Ergebnis nur Blöcke und Variante. In **keinem** der erzeugten Berichte stand
+je einer der Sätze „Kein bestätigter Bosch-Blockkopf gefunden“, „Blockkopfkandidat bei …
+nicht bestätigt“ oder „Kette bricht ab“ — obwohl der Quelltext über die verworfenen Kandidaten
+selbst schreibt „Wird gemeldet, aber nicht als Block ausgegeben“.
+
+Sie steht jetzt in den Erkennungsbelegen und damit in Bericht und Stapelausgabe. Der Deckel von
+fünf aufgezählten Kandidaten bleibt: der Befund eines normal gelesenen Abbilds wächst dadurch
+im Mittel um zwei Zeilen. Genau diese Sätze hätten den Nullpunktfehler oben sofort sichtbar
+gemacht.
+
 ### Bericht als Text, Markdown oder HTML
 
 Der Befund lässt sich jetzt in drei Formaten speichern. In der Oberfläche entscheidet die Endung

@@ -309,6 +309,87 @@ public static class BoschBlockChain
             evidence.Add($"… und {rejected.Count - Show} weitere nicht bestätigte Kandidaten");
     }
 
+    // ==================================================================
+    // Den Nullpunkt messen, statt ihn zu setzen
+    // ==================================================================
+
+    /// <summary>
+    /// Höchstens so viele gemessene Nullpunkte werden weiterverfolgt. Im Bestand
+    /// von 1516 Abbildern nennt kein einziges zwei widersprüchliche Basen; der
+    /// Deckel begrenzt also nicht die Aussage, sondern nur die Arbeit — jeder
+    /// Kandidat kostet einen weiteren vollen Abtastdurchlauf.
+    /// </summary>
+    public const int MaxWindowStarts = 4;
+
+    /// <summary>
+    /// Normalisiert liegen Programm-, Extern- und Datenflash eines TriCore alle
+    /// in <c>0x80000000…0x8FFFFFFF</c> (der Spiegel <c>0xA…</c> ist ausmaskiert).
+    /// Ein Nullpunkt außerhalb wäre keine Flashadresse.
+    /// </summary>
+    private const long FlashSpan = 0x10000000;
+
+    /// <summary>
+    /// Misst, welche CPU-Adresse zum Datei-Offset 0 gehört — statt sie zu setzen.
+    ///
+    /// Jeder Blockkopf nennt seine Lage selbst: <c>blockEnd</c> zeigt auf das
+    /// letzte Wort, also ist <c>blockStart = blockEnd − size + 4</c> und der
+    /// Nullpunkt <c>blockStart − fileStart</c>. Gesucht wird deshalb mit genau
+    /// den Regeln von <see cref="TryReadHeader"/>, die <em>ohne</em> Layout
+    /// auskommen: bekannte Blockart, Größe passt in die Datei, <c>0xDEADBEEF</c>
+    /// am errechneten Blockende, plausible Strukturzahl. Die Regeln, die eine
+    /// Basis voraussetzen, bleiben draußen — sie ist ja das Gesuchte.
+    ///
+    /// <strong>Das Ergebnis ist ein Vorschlag, kein Befund.</strong> Ein einzelner
+    /// Kopf bestätigt den aus ihm selbst abgeleiteten Nullpunkt zwangsläufig;
+    /// eine Mehrheit unter den Rohkandidaten wäre deshalb ein schwacher Beleg.
+    /// Entschieden wird stattdessen mit den <em>vollen</em> Regeln, in
+    /// <see cref="EcuDetector"/>: eine gemessene Basis gilt erst, wenn sie dort
+    /// <em>mehr</em> Köpfe bestätigt als jeder Vorgabekandidat — Gleichstand
+    /// bleibt bei der Vorgabe. Damit hängt die Basis an derselben Messung, die
+    /// schon über die Bankaufteilung entscheidet, und nicht an einer zweiten,
+    /// schwächeren Regel daneben.
+    ///
+    /// Zurück kommen die Kandidaten nach Stimmenzahl geordnet, die häufigste
+    /// zuerst; die Reihenfolge steuert nur, welche bei <see cref="MaxWindowStarts"/>
+    /// überhaupt geprüft werden.
+    /// </summary>
+    public static List<long> MeasureWindowStarts(byte[] data)
+    {
+        var votes = new Dictionary<long, int>();
+
+        for (long at = 0; at + HeaderSize <= data.LongLength; at += 4)
+        {
+            if (!BlockKinds.ContainsKey(data[at]) || data[at + 3] != 0) continue;
+
+            long size = ByteOrder.ReadUInt32(data, at + SizeOffset, Endianness.Little);
+            if (size < MinBlockSize || at + size > data.LongLength) continue;
+
+            if (ByteOrder.ReadUInt32(data, at + size - 4, Endianness.Little) != EndMarker) continue;
+
+            long structures = ByteOrder.ReadUInt32(data, at + ChecksumCountOffset, Endianness.Little);
+            if (structures > MaxChecksumStructures) continue;
+            if (HeaderSize + structures * ChecksumStructureSize + 4 > size) continue;
+
+            long blockEnd = PhysicalLayout.Normalize(
+                ByteOrder.ReadUInt32(data, at + BlockEndOffset, Endianness.Little));
+            long start = blockEnd - size + 4 - at;
+
+            // blockEnd zeigt auf das 0xDEADBEEF-Wort und ist damit wortbündig;
+            // ein krummer Nullpunkt kann nur aus Rauschen stammen.
+            if (start % 4 != 0) continue;
+            if (start < TriCoreDevice.PflashBase ||
+                start >= TriCoreDevice.PflashBase + FlashSpan) continue;
+
+            votes[start] = votes.GetValueOrDefault(start) + 1;
+        }
+
+        return votes.OrderByDescending(v => v.Value)
+                    .ThenBy(v => v.Key)
+                    .Take(MaxWindowStarts)
+                    .Select(v => v.Key)
+                    .ToList();
+    }
+
     /// <summary>
     /// Prüft einen Blockkopf. Erst wenn <em>alle</em> Regeln zutreffen, gilt er
     /// als gültig. Die Reihenfolge folgt der Schärfe: der Magiewert am Blockende
@@ -356,10 +437,6 @@ public static class BoschBlockChain
         if (structureCount > MaxChecksumStructures) return false;
         if (HeaderSize + structureCount * ChecksumStructureSize + 4 > size) return false;
 
-        // 8. Kennung ist druckbares ASCII (mit 0xFF-Füllung).
-        if (!TryReadIdentifier(data, fileStart + SwIdentifierOffset, out string swIdentifier))
-            return false;
-
         // 7. Zeigertabellen liegen im eigenen Block.
         long table1Cpu = ByteOrder.ReadUInt32(data, fileStart + Table1PointerOffset, Endianness.Little);
         long table2Cpu = ByteOrder.ReadUInt32(data, fileStart + Table2PointerOffset, Endianness.Little);
@@ -372,6 +449,10 @@ public static class BoschBlockChain
             return false;
 
         long next = ByteOrder.ReadUInt32(data, fileStart + NextSectorOffset, Endianness.Little);
+
+        // Die Kennung wird gelesen, nicht geprüft: sie steht deshalb hier unten
+        // und nicht mehr bei den Regeln. Begründung an ReadIdentifier.
+        string swIdentifier = ReadIdentifier(data, fileStart + SwIdentifierOffset);
 
         block = new BoschBlock(
             cpuStart, fileStart, size, blockEnd,
@@ -388,21 +469,43 @@ public static class BoschBlockChain
         return true;
     }
 
-    private static bool TryReadIdentifier(byte[] data, long at, out string identifier)
+    /// <summary>
+    /// Liest das Kennungsfeld als druckbares ASCII; <c>0x00</c> und <c>0xFF</c>
+    /// gelten als Füllung und werden übersprungen. Lässt sich das Feld so nicht
+    /// lesen, kommt die <em>leere</em> Kennung zurück.
+    ///
+    /// <strong>Und genau das verwirft den Kopf nicht mehr.</strong> Bis hierher
+    /// war das eine strukturelle Prüfung: ein einziges Byte außerhalb des
+    /// Textbereichs ließ <c>TryReadHeader</c> mit <c>false</c> zurückkehren,
+    /// obwohl die vier scharfen Regeln — <c>0xDEADBEEF</c>, <c>blockEnd</c>,
+    /// Größe und Strukturzahl — längst durch waren. Ein unlesbares Kennungsfeld
+    /// ist aber eine fehlende Kennung, kein ungültiger Kopf.
+    ///
+    /// Gemessen an 1516 VAG-EDC17-Abbildern: 25 davon füllen das Feld mit
+    /// <c>0xAF</c> statt mit <c>0x00</c> oder <c>0xFF</c> und verloren dadurch
+    /// zusammen 123 Blöcke, 14 von ihnen restlos alle. <c>0xAF</c> als drittes
+    /// Füllbyte zu <em>benennen</em> wäre dagegen nicht gedeckt: in keiner der
+    /// ausgewerteten Unterlagen kommt der Wert als Bosch-Wächterwert vor — er
+    /// steht nur in diesen Abbildern. Deshalb wird kein neues Füllbyte
+    /// eingeführt, sondern die Folge des Nichtlesens berichtigt.
+    ///
+    /// Alles oder nichts: ein Feld mit einem einzigen Fremdbyte ergibt keine
+    /// halbe Kennung. Aus Binärrauschen den druckbaren Teil herauszuklauben
+    /// erfände eine Teilenummer, die es nicht gibt.
+    /// </summary>
+    private static string ReadIdentifier(byte[] data, long at)
     {
-        identifier = "";
         var text = new StringBuilder();
 
         for (int i = 0; i < SwIdentifierLength; i++)
         {
             byte b = data[at + i];
             if (b is 0xFF or 0x00) continue;
-            if (b < 0x20 || b > 0x7E) return false;
+            if (b < 0x20 || b > 0x7E) return "";
             text.Append((char)b);
         }
 
-        identifier = text.ToString();
-        return true;
+        return text.ToString();
     }
 
     /// <summary>

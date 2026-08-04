@@ -398,6 +398,22 @@ Werkzeug vermeidet.
 Abbild.** Die Tabelle ist eine Nutzerangabe, die Bankgrenze eine Messung: nur eine richtige
 Bankgrenze lässt `blockEnd` und `0xDEADBEEF` zusammenpassen. Der Widerspruch wird gemeldet.
 
+**Und der Nullpunkt wird ebenso gemessen.** Ein Abbild beginnt nicht zwangsläufig an der
+PFLASH-Basis — eine Teilauslesung ab `0x80180000` ist im ausgewerteten Bestand der Normalfall,
+nicht die Ausnahme. Wo das Fenster anfängt, sagt der Blockkopf selbst:
+`blockStart = blockEnd − size + 4`, und damit ist der Nullpunkt `blockStart − fileStart`. Die so
+gemessenen Basen laufen als weitere Layout-Kandidaten durch dieselbe Zählung bestätigter Köpfe.
+Sie gewinnen nur mit **echtem** Vorsprung; bei Gleichstand bleibt es bei der Vorgabe, denn ein
+einzelner Kopf bestätigt die aus ihm selbst abgeleitete Basis zwangsläufig. Der Beleg nennt sie:
+
+```
+Nullpunkt 0x80180000 aus den Blockköpfen gemessen: dort bestätigen sich 2 Köpfe,
+ab dem Anfang von TC1796 nur 0 — das Abbild beginnt nicht an der PFLASH-Basis
+```
+
+Gemessen an 1516 VAG-Abbildern: 225 davon verloren vorher **sämtliche** Blöcke allein daran,
+dass Datei-Offset 0 fest auf `0x80000000` stand.
+
 Fehlt eine Rolle im Abbild, wird sie trotzdem aufgeführt — mit der Begründung, was an der
 Adresse tatsächlich steht, statt eines pauschalen „leer oder verschlüsselt“:
 
@@ -641,7 +657,13 @@ Erst wenn **alle** Regeln zutreffen, gilt ein Kopf als gültig. Die Reihenfolge 
 5. Der Block liegt ganz in *einer* physischen Bank — Bänke sind im CPU-Raum nicht zusammenhängend
 6. `numChecksumStructures` ist plausibel und passt in den Block
 7. Beide Zeigertabellen liegen im eigenen Block, sofern ihre Anzahl > 0 ist
-8. `swIdentifier` ist druckbares ASCII
+
+Der `swIdentifier` ist **keine** dieser Regeln. Er wird gelesen, nicht geprüft: ein Feld, das
+sich nicht als druckbares ASCII lesen lässt, ergibt eine leere Kennung — es verwirft den Kopf
+nicht. 25 von 1516 ausgewerteten VAG-Abbildern füllen es mit `0xAF` und verloren dadurch
+zusammen 123 Blöcke, 14 davon restlos alle, obwohl die vier scharfen Regeln bei jedem dieser
+Köpfe zutrafen. Ein Textfeld darf keine strukturelle Prüfung sein. Gelesen wird alles oder
+nichts: aus Binärrauschen den druckbaren Teil herauszuklauben erfände eine Teilenummer.
 
 ### Zwei Suchverfahren
 
@@ -649,6 +671,13 @@ Die Struktur wird **doppelt** gelesen: eine Abtastung über das ganze Abbild als
 und der Kettenlauf über `nextSector` als Gegenprobe. Stimmen beide Ergebnismengen überein, ist
 das ein eigener Beleg; weichen sie ab, wird die Differenz gemeldet — nicht stillschweigend
 vereinigt. Der Kettenlauf bricht nach höchstens 64 Schritten ab und erkennt Zyklen.
+
+**Was der Kettenleser dabei sieht, steht im Befund.** Verworfene Kopfkandidaten (höchstens fünf
+aufgezählt, der Rest gezählt), eine abgerissene oder zyklische Kette, ein fehlender Einstiegspunkt
+und die Übereinstimmung beider Verfahren erscheinen als Belege. „Kein Blockkopf gefunden“ und
+„zwei Kandidaten tragen `0xDEADBEEF`, aber ihr `blockEnd` passt nicht zur angenommenen Basis“
+sind zwei völlig verschiedene Aussagen — ohne diese Sätze sieht „0 Sektoren“ in beiden Fällen
+gleich aus.
 
 ### Nachgerechnete Invarianten
 

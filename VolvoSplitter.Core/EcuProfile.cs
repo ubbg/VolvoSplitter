@@ -43,6 +43,15 @@ public sealed record EcuProfile(
     /// <summary>Nur bei TriCore-Abbildern gesetzt.</summary>
     public TriCoreDevice? Device { get; init; }
 
+    /// <summary>
+    /// CPU-Adresse des Datei-Offsets 0, sofern sie an den Blockköpfen gemessen
+    /// wurde; null heißt „Anfang des Bausteins". Sie steht hier und nicht nur im
+    /// Erkennungsergebnis, weil <see cref="EcuProfiles.LayoutFor"/> das Layout
+    /// später ein zweites Mal baut — ohne sie liefe der Bericht auf einem
+    /// anderen Nullpunkt als die gelesene Blockkette.
+    /// </summary>
+    public long? WindowStart { get; init; }
+
     /// <summary>Sektortabelle des TRW-Formats; bei TriCore leer.</summary>
     public IReadOnlyList<SectorSlot> Slots { get; init; } = [];
 
@@ -93,11 +102,13 @@ public static class EcuProfiles
     /// anders als beim TRW-Format gibt es keine Sektortabelle, die einen
     /// kleineren Ausschnitt beschreibt.
     /// </summary>
-    public static EcuProfile ForTriCore(TriCoreDevice device, long imageSize, string? familyName = null) =>
+    public static EcuProfile ForTriCore(TriCoreDevice device, long imageSize,
+                                        string? familyName = null, long? windowStart = null) =>
         new("tricore", familyName ?? "EDC17 / MED17 (TriCore)", device.Name, "VAG / Bosch",
             Endianness.Little, imageSize, ContainerKind.BoschBlockChain, SupportsWriteBack: false)
         {
-            Device = device
+            Device = device,
+            WindowStart = windowStart
         };
 
     /// <summary>
@@ -127,7 +138,8 @@ public static class EcuProfiles
     /// <summary>Das physische Layout zu einem Profil, falls eines hinterlegt ist.</summary>
     public static PhysicalLayout? LayoutFor(EcuProfile profile, long imageSize)
     {
-        if (profile.Device is { } device) return TriCoreLayout.For(device, imageSize);
+        if (profile.Device is { } device)
+            return TriCoreLayout.For(device, imageSize, profile.WindowStart);
         if (profile.Family is { } family) return Mpc5777cLayout.For(family, imageSize);
         return null;
     }
