@@ -365,9 +365,16 @@ public partial class MainWindow : Window
         try
         {
             string path = _dump.ExtractSector(sector);
-            sector.Note = sector.CrcOk
-                ? $"Geschrieben nach {path}"
-                : $"Geschrieben nach {path} — Prüfsumme weicht ab, Inhalt unverändert übernommen";
+            // Drei Zustände, drei Sätze. Über die Verneinung von CrcOk zu gehen
+            // hieße, den nie gestellten Block einer Abweichung zu bezichtigen.
+            sector.Note = sector.Status switch
+            {
+                SectorStatus.CrcMismatch =>
+                    $"Geschrieben nach {path} — Prüfsumme weicht ab, Inhalt unverändert übernommen",
+                SectorStatus.ChecksumNotStamped =>
+                    $"Geschrieben nach {path} — für diesen Block wurde nie eine Prüfsumme gestellt",
+                _ => $"Geschrieben nach {path}"
+            };
             UpdateStatusLine($"{sector.OutputName} geschrieben");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -571,7 +578,11 @@ public partial class MainWindow : Window
                 string path = _dump.ExtractSector(sector);
                 sector.Note = $"Geschrieben nach {path}";
                 written++;
-                if (!sector.CrcOk) mismatched++;
+
+                // Gezählt wird die Abweichung, nicht „alles außer bestätigt“:
+                // die Zeile darunter schreibt „mit abweichender Prüfsumme“, und
+                // das gilt für einen nie gestellten Block nicht.
+                if (sector.Status == SectorStatus.CrcMismatch) mismatched++;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

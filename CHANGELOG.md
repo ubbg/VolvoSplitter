@@ -46,7 +46,8 @@ häufigste ist `0x80180000` (110 Abbilder).
 Die gemeldeten **Prüfsummenabweichungen steigen dabei von 26 auf 79**, und das ist kein
 Rückschritt: kein vorher bestätigter Block ist darunter. Alle 53 hängen an neu gefundenen
 Blöcken, 43 davon sind Tuning-protection- und Emulation-extension-Blöcke — genau die Blockarten,
-deren Abweichung das Werkzeug zeigen soll.
+deren Abweichung das Werkzeug zeigen soll. Elf der 79 sind allerdings gar keine Abweichungen —
+siehe „Ein nie gestelltes Stellwort ist keine Abweichung“ weiter unten.
 
 Nebenwirkung mitbehoben: der Bericht wies für eine Teilauslesung `0x000000–0x080000 →
 0x80000000–0x80080000` aus — eine Aussage, der der Blockkopf im selben Abbild widersprach.
@@ -120,6 +121,63 @@ Am Bestand: 975 Bereiche, davon 960 Zeilen unverändert und 15 geändert; „ges
 Von den verbliebenen 869 „Konstantes Füllbyte“ und den 10 neuen „Überwiegend 0x…“ ist keine
 einzige an den Bytes falsch — vorher waren es 10 von 879.
 
+### Ein nie gestelltes Stellwort ist keine Abweichung
+
+Der Eigentümer des Bestands rechnet damit, dass ein Teil seiner Abbilder vorab verändert wurde;
+48 der 1516 melden mindestens eine Prüfsummenabweichung, bei Dateien mit Tuning-Hinweis im Namen
+sind es 10 %. Eine Blockart fällt aus diesem Bild heraus: **„Emulation extension chip“ (`0xD0`)
+meldete in 11 von 11 Fällen eine Abweichung** — ausnahmslos. Eine Blockart, deren Prüfsumme nie
+aufgeht, ist keine Manipulation.
+
+An den Bytes ist die Sache eindeutig. Im Kopf eines solchen Blocks steht `0xAF` — das Füllbyte
+dieser Gerätefamilie für „nicht gesetzt“, dasselbe, das im Kennungsfeld schon einen eigenen
+Abschnitt oben hat — gleich viermal: in `nextSector`, in der Kennung, in den acht unerklärten
+Bytes bei +0x24 **und im Stellwort `checksumAdjust` bei +0x30**. Der Rumpf trägt dagegen echte
+Daten. Und die CRC32 läuft ohne Schlussabgleich über einen Bereich, der das Stellwort
+**einschließt**, damit das Register am Ende auf `0x35015001` steht — das stand als Begründung
+schon im Kopfkommentar von `BoschChecksum`. Ist das Stellwort nie gestellt worden, *kann* die
+Rechnung nicht aufgehen. Gemeldet wurde also eine Abweichung, wo es gar keine gestellte
+Prüfsumme gibt.
+
+„Weicht ab“ und „nicht gestellt“ sind deshalb jetzt zwei Zustände, und „in Ordnung“ ist der
+neue ausdrücklich auch nicht — es gibt drei:
+
+* `BoschChecksumStructure.NotStamped` trägt die Unterscheidung, `BoschBlock.ChecksumMismatch`
+  schließt sie aus, `ChecksumNotStamped` und `ChecksumsVerified` stehen daneben. `VerifiedCount`
+  und die Erkennungsbelege zählen einen ungestellten Block nicht mehr als bestätigt — er ist
+  ungeprüft, nicht bestätigt.
+* `SectorStatus.ChecksumNotStamped` steht zwischen `Verified` und `CrcMismatch`; `CrcOk` bleibt
+  für ihn falsch.
+* **Die Oberfläche sagt denselben dritten Satz.** Die Sektorkarte hat einen eigenen Zweig für
+  den neuen Zustand — ohne ihn fiele er in die Vorgabe der Karte, und die lautet „Prüfsumme
+  stimmt“: aus der Überbezichtigung wäre eine Falschbestätigung geworden, das schlechtere
+  Ergebnis von beiden. „Prüfsumme korrigieren“ bleibt dabei ausgeblendet, denn es gibt nichts
+  zu korrigieren. Vermerk und Zähler nach dem Herausschreiben gehen nicht mehr über die
+  Verneinung von `CrcOk`, sondern über den Zustand selbst — sonst meldete die Statuszeile „mit
+  abweichender Prüfsumme“ für einen Block, dessen Prüfsumme nie gestellt wurde.
+* Der Befund schreibt „nicht gestellt: Stellwort steht auf 0xAFAFAFAF, gerechnet 0xD519CB36“
+  statt „weicht ab: gerechnet …, erwartet …“, führt das Stellwort als eigenes Kopffeld und
+  färbt die Zeile nicht mehr als Warnung. Die Stapelausgabe bekommt eine dritte, ebenfalls
+  vierstellige Marke: `n.g.` neben `ok` und `CRC!`.
+
+Zwei Sperren gegen ein zu weites Netz, beide nachgemessen:
+
+* **Das Stellwort erklärt nur die Bereiche, die es einschließen.** Über die 8 441 Blöcke des
+  Bestands schließt genau **eine** Struktur je Block den eigenen Kopf ein; die übrigen 5 973
+  liegen daneben und werden vom Stellwort nicht berührt. Läge dort eine Abweichung, bliebe sie
+  eine — sonst entschuldigte ein einziges Füllwort im Kopf jede Abweichung im ganzen Block.
+* **`0x00000000` gilt nicht als Füllmuster.** Es kommt im Bestand als Stellwort null Mal vor —
+  wie `0xFFFFFFFF`, das trotzdem zählt, weil ein nie beschriebenes Wort im NOR-Flash genau so
+  aussieht. Die Null ist dagegen ein Wert, den ein wirklich gestelltes Stellwort annehmen kann;
+  sie mitzuzählen verschluckte echte Abweichungen ohne jeden Beleg.
+
+Am Bestand, gemessen über alle 1516 Abbilder, Blockzahl und Blockgrenzen unverändert (8 441
+Blöcke, 2 Abbilder ohne Blöcke): **8 362 Blöcke „ok“ · 68 „weicht ab“ · 11 „nicht gestellt“**,
+vorher 8 362 · 79 · —. Umgestuft wurden **genau** die 11 `0xD0`-Blöcke, und zwar nicht bloß der
+Zahl nach: die Menge der abweichenden Blöcke nachher ist die Menge vorher minus diese 11, kein
+Block ist neu dazugekommen und keiner der echten Abweichungen ist verschwunden. Die Zahl der
+Abbilder mit mindestens einer Abweichung fällt von 48 auf 37.
+
 ### Was ausdrücklich nicht geändert wurde
 
 * **Zwei Abbilder bleiben ohne Blöcke** (von vorher 243). Beide sagen jetzt wenigstens, was sie
@@ -137,6 +195,12 @@ einzige an den Bytes falsch — vorher waren es 10 von 879.
   Zeigermodell benutzt oder VAG-EDC17-Stände sie schlicht anders ablegen, lässt sich ohne eine
   unabhängige Referenz-CVN — etwa aus einem OBD-Auslesegerät — nicht entscheiden. Ein Ratewert
   wäre schlechter als keiner; der offene Punkt aus v1.1.1 bleibt bestehen.
+* **Die Farbe des Abbildstreifens bleibt zweiwertig.** `Controls/FlashMap.cs` malt
+  `CrcOk ? signal : warn`; ein nie gestellter Block bekommt damit den Warnton. Das ist die
+  ungefährliche Seite — der Signalton behauptete eine Bestätigung —, und es ist eine Farbe, kein
+  Satz. Die Karte daneben nennt den Zustand beim Namen. Die WPF-Anwendung zielt auf
+  `net10.0-windows` und lässt sich hier nicht bauen; für eine dritte Farbe ohne Übersetzer ist
+  das zu wenig Gewinn. Der Punkt steht als solcher da.
 
 ### Bericht als Text, Markdown oder HTML
 

@@ -242,6 +242,10 @@ ecu_Micro.mpc  ·  EMS2.4  ·  3 Sektoren
 ```
 
 Ein Sektor mit abweichender Prüfsumme wird mit `CRC!` markiert, aber **trotzdem geschrieben**.
+Die dritte Marke ist `n.g.` — „nicht gestellt“: für diesen Block steht das Stellwort
+(`checksumAdjust`) noch auf dem Füllmuster, es wurde also nie eine Prüfsumme gestellt. Die
+Rechnung kann dann nicht aufgehen, und das ist keine Abweichung; der Befund daneben schreibt es
+aus. Alle drei Marken sind vierstellig, damit die Spalten dahinter stehen bleiben.
 
 **Rückgabewert:** `0`, wenn alle gefundenen Abbilder verarbeitet wurden; sonst `1` — auch dann,
 wenn gar kein Abbild gefunden wurde.
@@ -264,8 +268,14 @@ Console.WriteLine(dump.Vehicle?.Vin);
 
 foreach (var sector in dump.Sectors.Where(s => s.Present))
 {
-    Console.WriteLine($"{sector.Label}: {sector.PartNumber} {sector.AddressRange} " +
-                      (sector.CrcOk ? "CRC ok" : $"CRC 0x{sector.CrcStored:X8} != 0x{sector.CrcComputed:X8}"));
+    string crc = sector.Status switch
+    {
+        SectorStatus.Verified           => "CRC ok",
+        SectorStatus.ChecksumNotStamped => "keine Prüfsumme gestellt",
+        _                               => $"CRC 0x{sector.CrcStored:X8} != 0x{sector.CrcComputed:X8}"
+    };
+
+    Console.WriteLine($"{sector.Label}: {sector.PartNumber} {sector.AddressRange} {crc}");
     dump.ExtractSector(sector, "ausgabe");
 }
 
@@ -703,6 +713,14 @@ läuft ohne Schlussabgleich, und der geprüfte Bereich schließt das Stellwort m
 **Erst eine nachgerechnete Prüfsumme rechtfertigt `Verified`.** Ein Block, dessen Kopf aufgeht,
 dessen Prüfsummen aber nicht stimmen, bekommt `CrcMismatch` — ein Abbild mit bearbeiteter
 Kalibrierung sieht damit sofort so aus, wie es ist.
+
+**Und zwischen beiden steht `ChecksumNotStamped`.** Weil der geprüfte Bereich das Stellwort
+`checksumAdjust` (+0x30) einschließt, kann die Rechnung nicht aufgehen, solange dort noch das
+Füllmuster steht (`0xAFAFAFAF` oder `0xFFFFFFFF`) — für diesen Block wurde nie eine Prüfsumme
+gestellt. Das ist keine Abweichung und auch keine Bestätigung, sondern ein dritter Zustand;
+gemessen betrifft er im ausgewerteten VAG-Bestand ausschließlich die Blockart `0xD0`
+(„Emulation extension chip“), und dort ausnahmslos. Er gilt nur für Bereiche, die das Stellwort
+wirklich einschließen: eine Abweichung daneben bleibt eine Abweichung.
 
 ### Blockarten
 

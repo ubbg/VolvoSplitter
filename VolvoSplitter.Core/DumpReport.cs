@@ -142,13 +142,25 @@ public static class DumpReport
                 continue;
             }
 
-            string crc = sector.CrcOk
-                ? $"0x{sector.CrcStored:X8} ok"
-                : $"0x{sector.CrcStored:X8} != 0x{sector.CrcComputed:X8}";
+            // Drei Zustände, drei Texte. „nicht gestellt" ist keine Abweichung:
+            // der Vergleichswert fehlt, statt zu widersprechen — deshalb steht
+            // dort auch kein „!=" und keine Warnfarbe.
+            string crc = sector.Status switch
+            {
+                SectorStatus.Verified => $"0x{sector.CrcStored:X8} ok",
+                SectorStatus.ChecksumNotStamped =>
+                    $"nicht gestellt — gerechnet 0x{sector.CrcComputed:X8}",
+                _ => $"0x{sector.CrcStored:X8} != 0x{sector.CrcComputed:X8}"
+            };
 
             rows.Add(new ReportRow(
                 [sector.Label, sector.PartNumber, sector.AddressRange, sector.SizeText, crc],
-                sector.CrcOk ? RowMood.Good : RowMood.Warning));
+                sector.Status switch
+                {
+                    SectorStatus.Verified => RowMood.Good,
+                    SectorStatus.ChecksumNotStamped => RowMood.Normal,
+                    _ => RowMood.Warning
+                }));
 
             if (sector.HasChecksumCopies)
                 rows.Add(new ReportRow(
@@ -186,7 +198,13 @@ public static class DumpReport
                     ("CPU-Bereich", block.AddressRange),
                     ("Datei", block.FileRange),
                     ("Größe", block.SizeText),
-                    ("nextSector", block.NextCpu is { } next ? Hex.Addr(next) : "0 — Kettenende")
+                    ("nextSector", block.NextCpu is { } next ? Hex.Addr(next) : "0 — Kettenende"),
+
+                    // Steht hier, weil die Prüfsummenzeilen darunter sich darauf
+                    // berufen: ohne gestelltes Stellwort gibt es nichts, wogegen
+                    // eine Prüfsumme stimmen könnte.
+                    ("checksumAdjust", $"0x{block.ChecksumAdjust:X8}" +
+                                       (block.ChecksumNotStamped ? " — nie gestellt" : ""))
                 ]);
 
                 block1.Table(["Verfahren", "Bereich", "Startwert", "Ergebnis"],
@@ -196,7 +214,7 @@ public static class DumpReport
                                  structure.Ok switch
                                  {
                                      true => RowMood.Good,
-                                     false => RowMood.Warning,
+                                     false when !structure.NotStamped => RowMood.Warning,
                                      _ => RowMood.Normal
                                  })));
 

@@ -386,6 +386,114 @@ public class BoschBlockChainTests
     }
 
     // ==================================================================
+    // Kein gestelltes Stellwort ist keine Abweichung
+    // ==================================================================
+
+    private const long UnstampedCpu = 0x80018000;
+    private const long UnstampedSize = 0x2000;
+
+    /// <summary>
+    /// Baut einen Block, dessen einzige Prüfsummenstruktur den <em>eigenen Kopf</em>
+    /// einschließt — und damit das Stellwort bei +0x30.
+    ///
+    /// Der Baukasten legt den geprüften Bereich sonst hinter den Kopf, und dort
+    /// hätte das Stellwort keine Wirkung. In echten Abbildern liegt es anders:
+    /// über die 8 441 Blöcke des VAG-Bestands schließt genau <em>eine</em>
+    /// Struktur je Block den eigenen Kopf ein — das ist die, deren Rechnung am
+    /// Stellwort hängt.
+    ///
+    /// Der Bereich wächst dabei über den, für den gestellt wurde; die Prüfsumme
+    /// geht also nicht mehr auf. Genau das ist der Ausgangspunkt beider Fälle —
+    /// unterschieden werden sie allein durch das Stellwort.
+    /// </summary>
+    private static byte[] BlockCheckedFromItsOwnHeader(uint adjustWord)
+    {
+        var block = TriCoreDump.Block(0x10, UnstampedCpu, UnstampedSize, 0, "10SW008917");
+
+        TestDump.WriteLe(block, BoschBlockChain.HeaderSize + 0x04, (uint)UnstampedCpu);
+        TestDump.WriteLe(block, BoschBlockChain.ChecksumAdjustOffset, adjustWord);
+
+        return block;
+    }
+
+    [Fact]
+    public void UnstampedAdjustWord_IsNotReportedAsMismatch()
+    {
+        // 0xAF ist in dieser Gerätefamilie das Füllbyte für „nicht gesetzt".
+        var image = SingleBlockImage(BlockCheckedFromItsOwnHeader(BoschBlockChain.AdjustFillAf));
+        var chain = BoschBlockChain.Read(image, Layout(Pmu0Size));
+
+        var block = Assert.Single(chain.Blocks);
+        var structure = Assert.Single(block.Checksums);
+
+        // Die Rechnung geht nicht auf — sie kann es gar nicht.
+        Assert.False(structure.Ok);
+        Assert.True(structure.NotStamped);
+
+        Assert.True(block.ChecksumNotStamped);
+        Assert.False(block.ChecksumMismatch);    // und das ist der ganze Punkt
+        Assert.False(block.ChecksumsVerified);   // „in Ordnung" ist es deshalb nicht
+
+        Assert.Equal(0, chain.VerifiedCount);
+
+        // Der Befund nennt den Grund und die gerechnete Zahl — als Angabe,
+        // nicht als Vorwurf.
+        Assert.Contains("nicht gestellt", structure.ResultText);
+        Assert.Contains("0xAFAFAFAF", structure.ResultText);
+        Assert.DoesNotContain("weicht ab", structure.ResultText);
+
+        var sector = Assert.Single(BoschBlockChain.ToSectors(chain.Blocks));
+        Assert.Equal(SectorStatus.ChecksumNotStamped, sector.Status);
+        Assert.NotEqual(SectorStatus.CrcMismatch, sector.Status);
+        Assert.False(sector.CrcOk);
+        Assert.True(sector.Present);
+    }
+
+    [Fact]
+    public void StampedAdjustWord_StillYieldsMismatch()
+    {
+        // Dieselbe nicht aufgehende Rechnung, nur mit gestelltem Stellwort. Das
+        // ist die Gegenprobe zum Fall darüber: die echten Abweichungen sind der
+        // eigentliche Wert des Werkzeugs und dürfen nicht mit verschwinden.
+        var image = SingleBlockImage(BlockCheckedFromItsOwnHeader(0x12345678));
+        var chain = BoschBlockChain.Read(image, Layout(Pmu0Size));
+
+        var block = Assert.Single(chain.Blocks);
+        var structure = Assert.Single(block.Checksums);
+
+        Assert.False(structure.Ok);
+        Assert.False(structure.NotStamped);
+
+        Assert.True(block.ChecksumMismatch);
+        Assert.False(block.ChecksumNotStamped);
+        Assert.Contains("weicht ab", structure.ResultText);
+
+        var sector = Assert.Single(BoschBlockChain.ToSectors(chain.Blocks));
+        Assert.Equal(SectorStatus.CrcMismatch, sector.Status);
+    }
+
+    [Fact]
+    public void UnstampedAdjustWord_OutsideTheCheckedRange_StaysAMismatch()
+    {
+        // Das Stellwort erklärt nur die Bereiche, die es einschließen. Liegt es
+        // daneben, ist eine nicht aufgehende Prüfsumme wieder das, wonach sie
+        // aussieht — sonst entschuldigte ein einziges Füllwort im Kopf jede
+        // Abweichung im ganzen Block.
+        var block = TriCoreDump.Block(0x10, UnstampedCpu, UnstampedSize, 0, "10SW008917");
+        TestDump.WriteLe(block, BoschBlockChain.ChecksumAdjustOffset, BoschBlockChain.AdjustFillAf);
+        block[UnstampedSize - 0x100] ^= 0xFF;    // ein Byte im geprüften Bereich kippen
+
+        var chain = BoschBlockChain.Read(SingleBlockImage(block), Layout(Pmu0Size));
+
+        var read = Assert.Single(chain.Blocks);
+        var structure = Assert.Single(read.Checksums);
+
+        Assert.False(structure.Ok);
+        Assert.False(structure.NotStamped);
+        Assert.True(read.ChecksumMismatch);
+    }
+
+    // ==================================================================
     // CVN
     // ==================================================================
 

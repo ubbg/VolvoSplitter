@@ -10,6 +10,23 @@ public sealed record BoschChecksumStructure(
     uint BlockIdRef, uint BlockIdAddr, byte Algorithm,
     uint? Computed, bool? Ok, string Note)
 {
+    /// <summary>
+    /// Das Stellwort des Blocks (<c>checksumAdjust</c>, +0x30) — mitgeführt, weil
+    /// erst es entscheidet, ob ein nicht aufgehendes Ergebnis eine Abweichung ist.
+    /// </summary>
+    public uint AdjustWord { get; init; }
+
+    /// <summary>
+    /// Für diesen Bereich wurde nie eine Prüfsumme gestellt: er schließt das
+    /// Stellwort seines Blocks ein, und das steht noch auf dem Füllmuster
+    /// (<see cref="BoschBlockChain.AdjustStamped"/>). Dann <em>kann</em> die
+    /// Rechnung nicht aufgehen — <see cref="Ok"/> ist falsch, ohne dass am
+    /// Abbild etwas verändert worden wäre. Das ist der dritte Zustand neben
+    /// „stimmt" und „weicht ab", und er darf mit keinem der beiden verwechselt
+    /// werden.
+    /// </summary>
+    public bool NotStamped { get; init; }
+
     public string AlgorithmName => BoschChecksum.Name(Algorithm);
 
     public string RangeText => $"{Hex.Addr(CsStart)} – {Hex.Addr(CsEnd)}";
@@ -17,6 +34,12 @@ public sealed record BoschChecksumStructure(
     public string ResultText => Ok switch
     {
         true => $"stimmt (0x{Computed:X8})",
+
+        // Kein Vorwurf, sondern eine Feststellung: die gerechnete Zahl steht da,
+        // aber es gibt nichts, wogegen sie stimmen könnte.
+        false when NotStamped =>
+            $"nicht gestellt: Stellwort steht auf 0x{AdjustWord:X8}, gerechnet 0x{Computed:X8}",
+
         false => Computed is { } value
             ? $"weicht ab: gerechnet 0x{value:X8}, erwartet " +
               $"0x{BoschChecksum.Expected(Algorithm, ExpectedValue):X8}"
@@ -64,7 +87,26 @@ public sealed record BoschBlock(
     public int? ChainOrder { get; init; }
 
     public bool ChecksumsComputed => Checksums.Any(c => c.Ok is not null);
-    public bool ChecksumMismatch => Checksums.Any(c => c.Ok == false);
+
+    /// <summary>
+    /// Eine Prüfsumme weicht ab — der Block ist gegenüber dem Stand verändert,
+    /// für den er gestellt wurde. Ein Bereich, für den nie gestellt wurde, zählt
+    /// ausdrücklich <em>nicht</em> dazu: sonst gölte ein unbeschriebenes
+    /// Stellwort als Manipulation.
+    /// </summary>
+    public bool ChecksumMismatch => Checksums.Any(c => c.Ok == false && !c.NotStamped);
+
+    /// <summary>
+    /// Für mindestens einen Bereich wurde nie eine Prüfsumme gestellt. Der
+    /// dritte Zustand: weder „stimmt" noch „weicht ab".
+    /// </summary>
+    public bool ChecksumNotStamped => Checksums.Any(c => c.NotStamped);
+
+    /// <summary>
+    /// Nachgerechnet und aufgegangen. Beide Verneinungen sind nötig: ein Block
+    /// ohne gestelltes Stellwort ist nicht bestätigt, sondern ungeprüft.
+    /// </summary>
+    public bool ChecksumsVerified => ChecksumsComputed && !ChecksumMismatch && !ChecksumNotStamped;
 
     public string AddressRange => Hex.Range(CpuStart, CpuEnd + 4);
     public string FileRange => Hex.Range(FileStart, FileEnd);
@@ -89,7 +131,12 @@ public sealed record BoschChainResult(
     public static readonly BoschChainResult Empty =
         new([], [], [], [], null, null, null);
 
-    public int VerifiedCount => Blocks.Count(b => !b.ChecksumMismatch);
+    /// <summary>
+    /// Blöcke mit nachgerechneter und aufgegangener Prüfsumme. Nicht die
+    /// Gegenzahl zu den Abweichungen: ein Block ohne gestelltes Stellwort ist
+    /// in keiner der beiden Mengen.
+    /// </summary>
+    public int VerifiedCount => Blocks.Count(b => b.ChecksumsVerified);
 }
 
 /// <summary>
@@ -151,6 +198,44 @@ public static class BoschBlockChain
 
     /// <summary>Schrägstrichgetrennte Variantenkennung im Dataset-Block.</summary>
     public const int VariantOffset = 0x78;
+
+    /// <summary>
+    /// Füllmuster eines nie gestellten Stellworts, gemessen am Bestand.
+    ///
+    /// <c>0xAF</c> ist in dieser Gerätefamilie das Füllbyte für „nicht gesetzt" —
+    /// dasselbe, das 25 der 1 516 ausgewerteten VAG-EDC17-Abbilder in das
+    /// Kennungsfeld schreiben (siehe <see cref="ReadIdentifier"/>). Im Kopf eines
+    /// „Emulation extension chip"-Blocks (0xD0) steht es zugleich in
+    /// <c>nextSector</c>, in der Kennung, in den acht unerklärten Bytes bei
+    /// +0x24 <em>und</em> im Stellwort bei +0x30, während der Rumpf echte Daten
+    /// trägt.
+    /// </summary>
+    public const uint AdjustFillAf = 0xAFAFAFAF;
+
+    /// <summary>
+    /// Das zweite Füllmuster: der Löschzustand des NOR-Flash. Im Bestand kommt
+    /// es als Stellwort nicht vor — es steht hier, weil ein nie beschriebenes
+    /// Wort genau so aussieht und derselbe Schluss dann derselbe wäre.
+    ///
+    /// <c>0x00000000</c> ist bewusst <em>kein</em> drittes Muster. Es ist im
+    /// Bestand ebenfalls null Mal gemessen, aber anders als die beiden oben ist
+    /// es ein Wert, den ein wirklich gestelltes Stellwort annehmen kann — es
+    /// als „nicht gestellt" zu lesen würde also eine echte Abweichung
+    /// verschlucken, und dafür gibt es keinen Beleg.
+    /// </summary>
+    public const uint AdjustFillErased = 0xFFFFFFFF;
+
+    /// <summary>
+    /// Wurde das Stellwort dieses Blocks je gestellt? Steht es auf einem
+    /// Füllmuster, kann eine Prüfsumme über einen Bereich, der es einschließt,
+    /// rechnerisch nicht aufgehen: die CRC32 läuft ohne Schlussabgleich, und der
+    /// geprüfte Bereich schließt das Stellwort mit ein, damit das Register am
+    /// Ende auf <see cref="BoschChecksum.Crc32Residue"/> steht (siehe
+    /// <see cref="BoschChecksum"/>). Ein nie gestelltes Stellwort ist deshalb
+    /// keine Abweichung, sondern eine fehlende Prüfsumme.
+    /// </summary>
+    public static bool AdjustStamped(uint adjust) =>
+        adjust is not (AdjustFillAf or AdjustFillErased);
 
     /// <summary>Deckel des Vorbilds — mehr Strukturen gelten als unplausibel.</summary>
     public const int MaxChecksumStructures = 100;
@@ -702,6 +787,14 @@ public static class BoschBlockChain
     {
         var result = new List<BoschChecksumStructure>();
 
+        // Ob ein nicht aufgehendes Ergebnis eine Abweichung ist, entscheidet das
+        // Stellwort des Blocks — und zwar nur für die Bereiche, die es überhaupt
+        // einschließen. Gemessen: über 8 441 Blöcke des Bestands tut das genau
+        // eine Struktur je Block; die übrigen 5 973 liegen daneben und werden
+        // vom Stellwort nicht berührt.
+        bool stamped = AdjustStamped(block.ChecksumAdjust);
+        long adjustFile = block.FileStart + ChecksumAdjustOffset;
+
         for (int i = 0; i < block.ChecksumStructureCount; i++)
         {
             long at = block.FileStart + HeaderSize + i * (long)ChecksumStructureSize;
@@ -717,20 +810,27 @@ public static class BoschBlockChain
             byte algorithm = (byte)(ByteOrder.ReadUInt16(data, at + 0x1C, Endianness.Little) & 0xFF);
 
             result.Add(Evaluate(data, layout, csBlockId, csStart, csEnd, startValue, expected,
-                                blockIdRef, blockIdAddr, algorithm));
+                                blockIdRef, blockIdAddr, algorithm,
+                                block.ChecksumAdjust, stamped ? null : adjustFile));
         }
 
         return result;
     }
 
+    /// <param name="unstampedAdjustFile">
+    /// Datei-Offset des Stellworts, wenn es <em>nicht</em> gestellt ist — sonst
+    /// null. Ein Bereich, der diese Stelle einschließt, kann dann nicht
+    /// aufgehen; ein Bereich daneben sehr wohl.
+    /// </param>
     private static BoschChecksumStructure Evaluate(byte[] data, PhysicalLayout layout,
                                                    byte csBlockId, long csStart, long csEnd,
                                                    uint startValue, uint expected,
-                                                   uint blockIdRef, uint blockIdAddr, byte algorithm)
+                                                   uint blockIdRef, uint blockIdAddr, byte algorithm,
+                                                   uint adjustWord, long? unstampedAdjustFile)
     {
         BoschChecksumStructure Unchecked(string note) =>
             new(csBlockId, csStart, csEnd, startValue, expected, blockIdRef, blockIdAddr,
-                algorithm, null, null, note);
+                algorithm, null, null, note) { AdjustWord = adjustWord };
 
         if (!BoschChecksum.IsKnown(algorithm))
             return Unchecked($"Algorithmus {BoschChecksum.Name(algorithm)} — nicht nachgerechnet, " +
@@ -754,9 +854,16 @@ public static class BoschBlockChain
         if (computed is null || target is null)
             return Unchecked($"Algorithmus {BoschChecksum.Name(algorithm)} — nicht nachgerechnet");
 
+        bool coversAdjust = unstampedAdjustFile is { } adjust &&
+                            from <= adjust && adjust + 4 <= to + 1;
+
         return new BoschChecksumStructure(csBlockId, csStart, csEnd, startValue, expected,
                                           blockIdRef, blockIdAddr, algorithm,
-                                          computed, computed == target, "");
+                                          computed, computed == target, "")
+        {
+            AdjustWord = adjustWord,
+            NotStamped = computed != target && coversAdjust
+        };
     }
 
     // ==================================================================
@@ -869,6 +976,11 @@ public static class BoschBlockChain
     /// <c>Verified</c> bekommt nur, wessen Prüfsummen aufgehen. Ein Block mit
     /// gültigem Kopf, aber abweichender Prüfsumme wird <c>CrcMismatch</c> — ein
     /// Abbild mit bearbeiteter Kalibrierung sieht damit sofort so aus, wie es ist.
+    ///
+    /// Dazwischen steht <c>ChecksumNotStamped</c>: ein Block, dessen Stellwort
+    /// nie gestellt wurde. Ihn als Abweichung zu führen hieße, ein
+    /// unbeschriebenes Wort als Manipulation zu melden — und ihn als bestätigt
+    /// zu führen hieße, eine Prüfung zu behaupten, die nicht stattgefunden hat.
     /// </summary>
     public static List<SectorInfo> ToSectors(IReadOnlyList<BoschBlock> blocks)
     {
@@ -877,8 +989,9 @@ public static class BoschBlockChain
         for (int i = 0; i < blocks.Count; i++)
         {
             var block = blocks[i];
-            var failed = block.Checksums.FirstOrDefault(c => c.Ok == false);
-            var any = failed ?? block.Checksums.FirstOrDefault();
+            var failed = block.Checksums.FirstOrDefault(c => c.Ok == false && !c.NotStamped);
+            var unstamped = block.Checksums.FirstOrDefault(c => c.NotStamped);
+            var any = failed ?? unstamped ?? block.Checksums.FirstOrDefault();
 
             sectors.Add(new SectorInfo
             {
@@ -887,7 +1000,9 @@ public static class BoschBlockChain
                 Prefix = $"blk{i + 1:00}_",
                 Start = block.FileStart,
                 CpuOffset = block.CpuStart,
-                Status = failed is null ? SectorStatus.Verified : SectorStatus.CrcMismatch,
+                Status = failed is not null ? SectorStatus.CrcMismatch
+                       : unstamped is not null ? SectorStatus.ChecksumNotStamped
+                       : SectorStatus.Verified,
                 PartNumber = block.Identifier.Length > 0 ? block.Identifier : $"0x{block.Id:X2}",
                 Length = block.Size,
                 CrcStored = any is null ? 0 : BoschChecksum.Expected(any.Algorithm, any.ExpectedValue) ?? 0,

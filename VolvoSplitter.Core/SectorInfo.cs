@@ -11,6 +11,15 @@ public enum SectorStatus
     /// <summary>Sektor gelesen, Prüfsumme weicht ab — wird trotzdem geschrieben.</summary>
     CrcMismatch,
 
+    /// <summary>
+    /// Sektor gelesen, aber es wurde nie eine Prüfsumme gestellt — das Stellwort
+    /// des Blocks steht auf dem Füllmuster. Der dritte Zustand: die Rechnung
+    /// kann nicht aufgehen, und trotzdem ist nichts abweichend. Ihn mit
+    /// <see cref="CrcMismatch"/> zusammenzulegen hieße, jedem Besitzer eines
+    /// solchen Abbilds eine Manipulation zu melden, die es nicht gibt.
+    /// </summary>
+    ChecksumNotStamped,
+
     /// <summary>An dieser Adresse steht kein lesbarer Sektor.</summary>
     Missing
 }
@@ -61,6 +70,13 @@ public sealed class SectorInfo : INotifyPropertyChanged
 
     public bool Present => Status != SectorStatus.Missing;
     public bool CrcOk => Status == SectorStatus.Verified;
+
+    /// <summary>
+    /// Für diesen Sektor wurde nie eine Prüfsumme gestellt. <see cref="CrcOk"/>
+    /// bleibt dabei falsch — bestätigt ist er nicht —, aber abweichend ist er
+    /// eben auch nicht.
+    /// </summary>
+    public bool ChecksumNotStamped => Status == SectorStatus.ChecksumNotStamped;
 
     /// <summary>
     /// Für diesen Sektor gibt es Vorgänge, die das Abbild verändern. Bei den
