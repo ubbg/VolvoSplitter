@@ -431,9 +431,24 @@ Nullpunkt 0x80180000 aus den Blockköpfen gemessen: dort bestätigen sich 2 Köp
 ab dem Anfang von TC1796 nur 0 — das Abbild beginnt nicht an der PFLASH-Basis
 ```
 
+Ein gemessener Nullpunkt sagt, wo das Fenster anfängt — und **nichts** über Bänke dahinter.
+Deshalb erscheint ein solches Abbild als *eine* PFLASH-Partition ab der gemessenen Adresse
+(`0x000000 – 0x080000 → 0x80180000 – 0x80200000`), ohne Sektorgliederung und mit
+`Complete: false`; die Herkunftszeile sagt „am Abbild gemessen, Baustein und Sektoreinteilung
+bleiben offen“.
+
 Gemessen an 1516 VAG-Abbildern: 227 davon verloren vorher **sämtliche** Blöcke allein daran,
 dass Datei-Offset 0 fest auf `0x80000000` stand — genau so viele lesen ihr Layout heute aus
-einem gemessenen Nullpunkt, und kein vorher gelesenes Abbild ist darunter.
+einem gemessenen Nullpunkt, und kein vorher gelesenes Abbild ist darunter. Über den ganzen
+Bestand: **243 → 2** Abbilder ohne Blöcke, **7826 → 8441** Blöcke, keines verschlechtert.
+Am deutlichsten bei den kleinen Dateien — **alle 136** Abbilder unter 1 MiB waren stumm,
+ausnahmslos, und alle 136 liefern jetzt Blöcke. Ob eine solche Datei eine Teilauslesung oder ein
+von Hand herausgelöster Einzelblock ist, muss das Werkzeug dafür nicht wissen: im einen Fall ist
+der gefundene Kopf der Kettenanfang, im anderen der eigene Kopf des Blocks, und beide nennen
+ihre Lage auf dieselbe Weise.
+
+> Dieser Bestand ist privat und liegt dem Repository **nicht** bei; hier liegen weiterhin keine
+> Steuergeräte-Abbilder (siehe [Selbst bauen](#selbst-bauen)).
 
 Fehlt eine Rolle im Abbild, wird sie trotzdem aufgeführt — mit der Begründung, was an der
 Adresse tatsächlich steht, statt eines pauschalen „leer oder verschlüsselt“:
@@ -524,6 +539,13 @@ So wird ein Abbild auf die Bänke abgebildet:
 | oben + `0x10000` (TC1797) bzw. + `0x20000` (TC1796) | zusätzlich DFLASH ab `0xAF000000` |
 | sonst | Rest als „Anhang“ **ohne** CPU-Adresse |
 
+Diese Tabelle gilt für ein Abbild, das am Anfang des Bausteins beginnt. Wurde der
+[Nullpunkt gemessen](#vag--bosch-auf-infineon-tricore), tritt sie nicht in Kraft: das ganze
+Abbild ist dann eine PFLASH-Partition ab der gemessenen Adresse, ohne Bank- und
+Sektorgliederung. Ein Fensteranfang, der in **keiner** Bank des benannten Bausteins liegt, wird
+ebenso behandelt und nicht stillschweigend auf die nächste Bankgrenze aufgerundet — das
+behauptete eine Adresse, die niemand gemessen hat.
+
 Ein Anhang beliebiger Größe ist **kein** Datenflash, nur weil er hinten steht — dieselbe Regel
 wie beim MPC5777C.
 
@@ -561,14 +583,37 @@ Dazu jeweils eine Konfidenz:
 * **Shannon-Entropie** über den gesamten Bereich
 * **Anteil wiederkehrender 16-Byte-Blöcke** in einem zusammenhängenden Fenster von höchstens
   1 MiB — compilierter Code wiederholt sich stark, Chiffretext praktisch nie
+* **Häufigstes Byte und sein Anteil** — die Frage „ist der Bereich konstant?“ wird gezählt, nicht
+  aus der Entropie gefolgert
 * **Quelldateipfade** (`src/`, `../`) und die SCCS-Kennung `@(#)` aus Assert- und
-  Versionsstrings — belegen unverschlüsselten Code
-* **Anteil monotoner 64-Byte-Fenster** als u8- oder u16-Folge — Kennfeldachsen und Stützstellen
-  sind genau das
+  Versionsstrings — aber nur, wenn die Nadel **in einer Zeichenkette** steht (siehe unten)
 * **`UPTIME`-Records** — Beleg für Laufzeitänderungen
 * **Blockstatus-Doppelwörter** am Blockanfang nach NXP AN4868, Tabelle 4
   (`$erased`, `$verified`, `$copy`, `$active`)
 * **Kopien bekannter Sektor-Prüfwerte** — der eigene Trailer des Sektors zählt dabei nicht
+
+### Was „gesichert“ verlangt
+
+Die Stufe `gesichert` heißt „belegt“, nicht „wahrscheinlich“. Zwei Merkmale erreichten sie mit
+einer Aussage, die an den Bytes nicht hielt; über 1516 echte VAG-EDC17-Abbilder gerechnet waren
+**15 der so eingeordneten Bereiche falsch**.
+
+**Ein Dreibytemuster ist kein Pfad.** Ein Fund von `src/`, `../` oder `@(#)` reicht nicht mehr —
+die Nadel muss in einem zusammenhängenden druckbaren ASCII-Lauf von mindestens **16 Byte**
+stehen, und der gefundene Text steht im Befund, damit der Beleg zu sehen ist. Die Schwelle ist
+gerechnet und gemessen: (95/256)¹⁶ liegt unter einem erwarteten Zufallstreffer je 4 MiB, und im
+ganzen Bestand ist der längste druckbare Lauf, der eine der drei Nadeln enthält, **8 Byte** lang
+(`VV=VV../`) — ein echter Pfad wie `../src/appl/main.c` hat 18. Verloren geht dadurch nichts:
+`src/` und `@(#)` kommen in **keinem einzigen** der 1516 Abbilder vor, `../` in 59, und alle
+Treffer waren Zufall. Zusätzlich geht die Opak-Erkennung jetzt vor — „Entropie 8,00“ und
+„Programmcode im Klartext“ schließen einander aus.
+
+**Konstanz wird gezählt, nicht geschätzt.** Ein Bereich heißt nur dann „Konstantes Füllbyte
+0x??“, wenn wirklich jedes Byte diesen Wert trägt. Sonst wird das häufigste Byte mit seinem
+Anteil genannt — „Überwiegend 0x00 (99,94 %), 5 abweichende Bytes“ — und die Stufe fällt auf
+`stark gestützt`. Die frühere Bedingung war „Entropie unter 0,5“, und das heißt „stark
+ungleichverteilt“; genannt wurde das erste Byte des Bereichs. In fünf gemessenen Fällen kam
+genau dieses Byte im ganzen Bereich **einmal** vor.
 
 ### Was das Werkzeug bewusst nicht behauptet
 
@@ -585,10 +630,17 @@ Dazu jeweils eine Konfidenz:
   mit *„Herkunft nicht bestimmt“* und Konfidenz `unbekannt` gemeldet.
 * Ohne **geprüfte Blockkette** gibt es keine Blöcke — auch dann nicht, wenn ein TriCore-Abbild
   plausibel aussieht. Es bleibt bei Bereichen mit Konfidenzangabe.
-* Ein Datenbereich, der zu Kennfeldern passt, heißt **„Kalibrierungskandidat“**, nicht
-  „Kalibrierungssektor“ — und behält die Art `Daten`. Ein eigener `RegionKind.Calibration` wäre
-  eine Behauptung im Typsystem; ohne A2L oder DAMOS ist ein Kalibrierbereich aus dem Abbild
-  allein nicht belegbar.
+* Es gibt **keine Einordnung „Kalibrierung“** — auch keine als Kandidat. Ohne A2L oder DAMOS ist
+  ein Kalibrierbereich aus dem Abbild allein nicht belegbar; ein eigener
+  `RegionKind.Calibration` wäre ohnehin eine Behauptung im Typsystem. Bis v1.2.0 gab es dafür
+  einen Titel „Datenbereich — Kalibrierungskandidat“, gebunden an vier Merkmale zugleich, darunter
+  einen Anteil monotoner Fenster von 0,35. Er hat in **0 von 1516** Abbildern gegriffen und kann
+  es auch nicht: gemessen erreicht der Anteil höchstens 0,0292, und zwar in den Dataset-Blöcken,
+  in denen die Kalibrierdaten wirklich liegen — die sind als Blöcke beansprucht und für die
+  Bereichssuche unsichtbar. Die kopflosen Restbereiche, für die die Einordnung gedacht war,
+  erreichen bereits 0,0220; die beiden Mengen überlappen, es gibt also keine Schwelle, die sie
+  trennt. Ein Zweig, der nur auf synthetischen Rampen anspricht, steht im Bericht als
+  Möglichkeit, die es nicht gibt.
 * Die **Prüfsummenstrukturen** der Bosch-Blöcke werden gerechnet und gemeldet, aber nicht
   gedeutet: ein unbekannter Algorithmus führt zu „nicht nachgerechnet“, nicht zu einem geratenen
   Verfahren.
@@ -698,7 +750,9 @@ aufgezählt, der Rest gezählt), eine abgerissene oder zyklische Kette, ein fehl
 und die Übereinstimmung beider Verfahren erscheinen als Belege. „Kein Blockkopf gefunden“ und
 „zwei Kandidaten tragen `0xDEADBEEF`, aber ihr `blockEnd` passt nicht zur angenommenen Basis“
 sind zwei völlig verschiedene Aussagen — ohne diese Sätze sieht „0 Sektoren“ in beiden Fällen
-gleich aus.
+gleich aus. Über 1516 Abbilder gemessen trägt jeder Befund mindestens einen dieser Sätze, 366
+nennen ausdrücklich verworfene Kandidaten; ein normal gelesenes Abbild wächst dadurch im Mittel
+um 2,8 Zeilen.
 
 ### Nachgerechnete Invarianten
 
@@ -929,7 +983,8 @@ VolvoSplitter.csproj               WPF-Anwendung, net10.0-windows
 └── Native/WindowTheme.cs          Dunkle Titelleiste über dwmapi.dll
 
 VolvoSplitter.Cli/                 Stapelbetrieb, erzeugt „volvosplit“
-└── Program.cs                     Argumentauswertung, Ordnerdurchlauf, Konsolenausgabe
+├── CommandLine.cs                 Argumente, Dateisammlung, Zielordnerwahl — konsolenfrei
+└── Program.cs                     Ablauf und Konsolenausgabe
 
 VolvoSplitter.Core/                Analyse, ohne WPF — von Oberfläche und CLI gemeinsam genutzt
 ├── FlashDump.cs                   Laden, Analysieren, Extrahieren, Patchen, Speichern
@@ -957,7 +1012,7 @@ VolvoSplitter.Core/                Analyse, ohne WPF — von Oberfläche und CLI
     ├── BoschIdentity.cs           Kennungen samt Fundort
     └── VagEcuCatalog.cs           Steuergerätetyp → Mikrocontroller (Nutzerangabe)
 
-VolvoSplitter.Core.Tests/          126 xUnit-Tests
+VolvoSplitter.Core.Tests/          203 xUnit-Tests
 ├── TestDump.cs                    Synthetische TRW-Abbilder
 └── TriCoreDump.cs                 Synthetische TriCore-Abbilder mit gültiger Blockkette
 ```
@@ -999,8 +1054,9 @@ komplette Blockkarte des ausgewerteten MED17-Abbilds und die drei Bosch-Prüfalg
 Und ausdrücklich auch, was das Werkzeug **nicht** behauptet: dass der Regionsscanner keine
 Verschlüsselung behauptet, dass ein Bereich hinter dem Large Flash nicht automatisch EEPROM ist,
 dass ein TriCore-Anhang nicht automatisch DFLASH ist, dass ohne geprüfte Kette kein Block
-`Verified` wird, dass ein Kalibrierungskandidat ein Kandidat bleibt, und dass bei 2 MiB ohne
-Steuergerätekennung kein Baustein gewählt wird.
+`Verified` wird, dass ein Bereich in Kennfeldform keinen eigenen Titel bekommt, dass ein
+Dreibytemuster im Rauschen keinen Klartext belegt, dass „konstant“ gezählt und nicht aus der
+Entropie gefolgert wird, und dass bei 2 MiB ohne Steuergerätekennung kein Baustein gewählt wird.
 
 **Grenze der Prüfung, ausdrücklich:** im Repository liegen keine echten Steuergeräte-Abbilder,
 weder Volvo noch VAG. Alles oben Genannte prüft die Mechanik gegen synthetische Dateien, nicht
