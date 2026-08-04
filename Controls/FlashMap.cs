@@ -23,6 +23,18 @@ public sealed class FlashMap : FrameworkElement
     private const double BottomGutter = 34;
     private const double LabelGap = 8;
 
+    /// <summary>Breite der Spur, die einen einmal programmierbaren Bereich markiert.</summary>
+    private const double OtpStripeWidth = 4;
+
+    /// <summary>
+    /// Mindesthöhe eines OTP-Bereichs. Etwas mehr als bei den übrigen Bändern:
+    /// UTEST sind 16 KiB in 8,6 MiB Adressraum — maßstäblich ein Sechstel Pixel.
+    /// Bei der allgemeinen Mindesthöhe bliebe von Spur und Kontur ein Klecks
+    /// übrig, und der Bereich, dessen Bits sich nie zurücknehmen lassen, wäre
+    /// das Unauffälligste auf der ganzen Karte.
+    /// </summary>
+    private const double MinOtpHeight = 7;
+
     public static readonly DependencyProperty SectorsProperty =
         DependencyProperty.Register(nameof(Sectors), typeof(IReadOnlyList<SectorInfo>), typeof(FlashMap),
             new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
@@ -33,6 +45,10 @@ public sealed class FlashMap : FrameworkElement
 
     public static readonly DependencyProperty RegionsProperty =
         DependencyProperty.Register(nameof(Regions), typeof(IReadOnlyList<FlashRegion>), typeof(FlashMap),
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty PartitionsProperty =
+        DependencyProperty.Register(nameof(Partitions), typeof(IReadOnlyList<FlashPartition>), typeof(FlashMap),
             new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
     public static readonly DependencyProperty HighlightedProperty =
@@ -56,6 +72,17 @@ public sealed class FlashMap : FrameworkElement
     {
         get => (IReadOnlyList<FlashRegion>?)GetValue(RegionsProperty);
         set => SetValue(RegionsProperty, value);
+    }
+
+    /// <summary>
+    /// Die physischen Blöcke des Bausteins. Gezeichnet wird davon nur, was sich
+    /// nicht aus dem Inhalt ablesen lässt: die einmal programmierbaren Bereiche.
+    /// Alles andere bliebe eine zweite Gliederung über derselben Fläche.
+    /// </summary>
+    public IReadOnlyList<FlashPartition>? Partitions
+    {
+        get => (IReadOnlyList<FlashPartition>?)GetValue(PartitionsProperty);
+        set => SetValue(PartitionsProperty, value);
     }
 
     public SectorInfo? Highlighted
@@ -97,6 +124,8 @@ public sealed class FlashMap : FrameworkElement
         var text = Res("TextBrush", Brushes.White);
         var signal = Res("SignalBrush", Brushes.SteelBlue);
         var warn = Res("WarnBrush", Brushes.Orange);
+        var otp = Res("OtpBrush", Brushes.MediumPurple);
+        var otpShade = Res("OtpShadeBrush", Brushes.DarkSlateBlue);
 
         // Der Baustein als Objekt: gelöschtes Flash mit klarer Kante.
         var chip = new Rect(bandLeft, top, BandWidth, height);
@@ -116,6 +145,14 @@ public sealed class FlashMap : FrameworkElement
         edgePen.Freeze();
         dc.DrawRectangle(null, edgePen, chip);
 
+        // Die einmal programmierbaren Blöcke als getönter Grund — damit ein
+        // solcher Bereich auch dann zu sehen ist, wenn nichts darin steht. Beim
+        // MPC5777C ist UTEST im Abbild oft vollständig 0xFF; genau dann sagt die
+        // Karte sonst gar nichts über die 16 KiB, die niemand zurücknehmen kann.
+        foreach (var partition in OtpPartitions())
+            dc.DrawRectangle(otpShade, null, Band(bandLeft, top, height, partition.FileStart,
+                                                 partition.FileLength, MinOtpHeight));
+
         long occupied = 0;
 
         // Bereiche ohne Sektorkopf zuerst, in gedeckten Tönen: sie sind der
@@ -125,9 +162,8 @@ public sealed class FlashMap : FrameworkElement
         foreach (var region in Regions ?? [])
         {
             occupied += region.Length;
-            double ry = Snap(top + height * region.Start / (double)ImageSize);
-            double rh = Math.Max(MinBandHeight, Math.Round(height * region.Length / (double)ImageSize));
-            dc.DrawRectangle(RegionBrush(region.Kind), null, new Rect(bandLeft, ry, BandWidth, rh));
+            dc.DrawRectangle(RegionBrush(region.Kind), null,
+                             Band(bandLeft, top, height, region.Start, region.Length));
         }
 
         double lastLabelBottom = double.NegativeInfinity;
@@ -137,12 +173,10 @@ public sealed class FlashMap : FrameworkElement
             if (!sector.Present) continue;
             occupied += sector.Length;
 
-            double y = Snap(top + height * sector.Start / (double)ImageSize);
-            double h = Math.Max(MinBandHeight, Math.Round(height * sector.Length / (double)ImageSize));
-            var band = new Rect(bandLeft, y, BandWidth, h);
+            var band = Band(bandLeft, top, height, sector.Start, sector.Length);
 
             // Anklickbare Zone über die volle Breite, damit auch dünne Bänder treffbar sind.
-            _zones.Add((new Rect(0, y, ActualWidth, h), sector));
+            _zones.Add((new Rect(0, band.Top, ActualWidth, band.Height), sector));
 
             bool active = ReferenceEquals(sector, Highlighted);
             var fill = sector.CrcOk ? signal : warn;
@@ -178,6 +212,22 @@ public sealed class FlashMap : FrameworkElement
             }
         }
 
+        // Ganz zuletzt die OTP-Spur, damit kein Band sie verdeckt. Sie liegt
+        // neben der Füllung, nicht anstelle: ein Block behält seine Statusfarbe
+        // — ob die Prüfsumme aufgeht, ist eine andere Frage als die, ob sich der
+        // Bereich noch einmal beschreiben lässt.
+        var otpPen = new Pen(otp, 1);
+        otpPen.Freeze();
+
+        foreach (var partition in OtpPartitions())
+            DrawOtpMark(dc, otp, otpPen, Band(bandLeft, top, height, partition.FileStart,
+                                              partition.FileLength, MinOtpHeight));
+
+        foreach (var sector in Sectors ?? [])
+            if (sector is { Otp: true, Present: true })
+                DrawOtpMark(dc, otp, otpPen, Band(bandLeft, top, height, sector.Start,
+                                                  sector.Length, MinOtpHeight));
+
         // Grenzen des Adressraums
         var start = Label("0x000000", muted, 9);
         dc.DrawText(start, new Point(bandLeft + BandWidth - start.Width, top - start.Height - 4));
@@ -196,6 +246,44 @@ public sealed class FlashMap : FrameworkElement
     }
 
     private static double Snap(double value) => Math.Round(value) + 0.5;
+
+    /// <summary>
+    /// Rechteck eines Adressbereichs im Band. Die Position bleibt maßstäblich;
+    /// nur die Höhe bekommt eine Untergrenze, sonst wären 16 KiB in 8 MiB
+    /// Adressraum kein Pixel hoch.
+    /// </summary>
+    private Rect Band(double bandLeft, double top, double height, long start, long length,
+                      double minHeight = MinBandHeight)
+    {
+        double h = Math.Max(minHeight, Math.Round(height * length / (double)ImageSize));
+        double y = Snap(top + height * start / (double)ImageSize);
+
+        // Was am Dateiende liegt, bekommt durch die Mindesthöhe mehr Pixel, als
+        // maßstäblich übrig sind — UTEST sind die letzten 16 KiB von 8,6 MiB.
+        // Der Überstand wächst nach oben, sonst läge er über der Endadresse,
+        // die unter dem Baustein steht.
+        double bottom = Snap(top + height);
+        if (y + h > bottom) y = bottom - h;
+
+        return new Rect(bandLeft, y, BandWidth, h);
+    }
+
+    /// <summary>Die einmal programmierbaren Blöcke, soweit ein Layout vorliegt.</summary>
+    private IEnumerable<FlashPartition> OtpPartitions() =>
+        (Partitions ?? []).Where(p => p.Otp);
+
+    /// <summary>
+    /// Kontur um den Bereich und eine Spur an seiner linken Kante. Beides
+    /// zusammen, weil keines allein reicht: die Kontur allein verschwindet
+    /// zwischen zwei benachbarten Bändern, die Spur allein sagt nicht, wie weit
+    /// der Bereich reicht. Die Füllung bleibt frei — dort steht schon die
+    /// Statusfarbe, und die trägt eine andere Aussage.
+    /// </summary>
+    private static void DrawOtpMark(DrawingContext dc, Brush brush, Pen pen, Rect band)
+    {
+        dc.DrawRectangle(brush, null, new Rect(band.Left, band.Top, OtpStripeWidth, band.Height));
+        dc.DrawRectangle(null, pen, band);
+    }
 
     /// <summary>
     /// Rasterweite aus der Abbildgröße: eine Zweierpotenz, die auf acht bis

@@ -899,9 +899,15 @@ Das gehört in `CHANGELOG.md` und in den Befundtext.
 
 **Nicht-Ziele**
 
-- Kein Schreiben, kein Prüfsummen-Korrigieren, kein Blockersatz für TriCore-Abbilder.
-  Prüfsummen werden **gerechnet und gemeldet**, nicht gestellt.
-- Keine CVN-Korrektur — die CVN wird gelesen und ausgewiesen.
+- Kein Schreiben und kein Prüfsummen-Korrigieren für TriCore-Abbilder. Prüfsummen werden
+  **gerechnet und gemeldet**, nicht gestellt.
+- Beim Blockersatz **kein freies Platzieren**, kein Umschreiben von Adressfeldern, kein
+  Stellen von Prüfsummen. Zugelassen ist allein die **1:1-Übernahme an dieselbe
+  CPU-Adresse** aus einem zweiten geöffneten Abbild — gerade weil sie `blockEnd`,
+  `nextSector`, die Tabellenzeiger und die Bereichsgrenzen der Prüfsummenstrukturen
+  unberührt lässt. Übernommen werden Bytes, die ein anderes Abbild schon trägt; was danach
+  aufgeht, wird nachgerechnet und ausgewiesen.
+- Keine CVN-Korrektur — die CVN wird gelesen und ausgewiesen, auch nach einem Blockübertrag.
 - Kein GF(2)-Löser, keine `dCSAdjust`-Berechnung.
 - Kein Entpacken von FRF, ODX-F, SGO oder anderen Auslieferungscontainern; kein
   Entschlüsseln von irgendetwas.

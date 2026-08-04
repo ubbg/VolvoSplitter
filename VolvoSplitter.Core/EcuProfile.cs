@@ -27,6 +27,20 @@ public enum ContainerKind
 /// Die Festlegung steht damit als Feld im Code und nicht bloß in weggelassenen
 /// Codepfaden.
 /// </param>
+/// <param name="SupportsBlockTransfer">
+/// Ob ein Block 1:1 aus einem anderen Abbild an <em>dieselbe</em> CPU-Adresse
+/// übernommen werden darf.
+///
+/// Ein anderer Vorgang als <paramref name="SupportsWriteBack"/> und deshalb ein
+/// eigenes Feld: dort werden Werte <em>gerechnet und gestellt</em>, hier werden
+/// vorhandene Bytes übernommen. Für TriCore gilt weiterhin, dass keine
+/// Prüfsumme gestellt wird — der Übertrag rührt keine an, er kopiert nur und
+/// rechnet danach nach.
+///
+/// Bei <c>unknown</c> false: ohne erkannte Blockstruktur gibt es keinen Block,
+/// sondern nur Bytes an einem Offset. Eine Kopie dorthin wäre genau das Raten,
+/// das dieses Werkzeug nicht tut.
+/// </param>
 public sealed record EcuProfile(
     string Key,
     string FamilyName,
@@ -35,8 +49,16 @@ public sealed record EcuProfile(
     Endianness Endianness,
     long FlashSize,
     ContainerKind Container,
-    bool SupportsWriteBack)
+    bool SupportsWriteBack,
+    bool SupportsBlockTransfer)
 {
+    /// <summary>
+    /// Es gibt überhaupt einen Vorgang, der dieses Abbild verändert — also auch
+    /// etwas zu speichern. Ein Übertrag, dessen Ergebnis sich nicht sichern
+    /// ließe, wäre nutzlos.
+    /// </summary>
+    public bool SupportsSaving => SupportsWriteBack || SupportsBlockTransfer;
+
     /// <summary>Nur bei den beiden TRW-Familien gesetzt.</summary>
     public EcuFamily? Family { get; init; }
 
@@ -79,7 +101,8 @@ public static class EcuProfiles
 
     public static readonly EcuProfile Ems23 = new(
         "ems23", "EMS2.3", "MPC5674F", "Volvo / TRW",
-        Endianness.Big, 0x400000, ContainerKind.TrwSector, SupportsWriteBack: true)
+        Endianness.Big, 0x400000, ContainerKind.TrwSector,
+        SupportsWriteBack: true, SupportsBlockTransfer: true)
     {
         Family = EcuFamily.Ems23,
         Slots = Ems23Slots
@@ -88,7 +111,7 @@ public static class EcuProfiles
     public static readonly EcuProfile Ems24 = new(
         "ems24", "EMS2.4", "MPC5777C", "Volvo / TRW",
         Endianness.Big, Mpc5777cLayout.LargeFlashSize, ContainerKind.TrwSector,
-        SupportsWriteBack: true)
+        SupportsWriteBack: true, SupportsBlockTransfer: true)
     {
         Family = EcuFamily.Ems24,
         Slots = Ems24Slots
@@ -105,7 +128,11 @@ public static class EcuProfiles
     public static EcuProfile ForTriCore(TriCoreDevice device, long imageSize,
                                         string? familyName = null, long? windowStart = null) =>
         new("tricore", familyName ?? "EDC17 / MED17 (TriCore)", device.Name, "VAG / Bosch",
-            Endianness.Little, imageSize, ContainerKind.BoschBlockChain, SupportsWriteBack: false)
+            Endianness.Little, imageSize, ContainerKind.BoschBlockChain,
+            // Nur lesen bleibt nur lesen: keine Prüfsumme wird gestellt. Der
+            // Blockübertrag 1:1 ist davon unberührt — er übernimmt Bytes, die
+            // ein anderes Abbild schon trägt, und rechnet danach nach.
+            SupportsWriteBack: false, SupportsBlockTransfer: true)
         {
             Device = device,
             WindowStart = windowStart
@@ -117,7 +144,8 @@ public static class EcuProfiles
     /// </summary>
     public static EcuProfile Unknown(long imageSize) =>
         new("unknown", "unbekannt", "—", "unbekannt",
-            Endianness.Big, imageSize, ContainerKind.None, SupportsWriteBack: false);
+            Endianness.Big, imageSize, ContainerKind.None,
+            SupportsWriteBack: false, SupportsBlockTransfer: false);
 
     /// <summary>Profile, die sich über <c>--profile</c> erzwingen lassen.</summary>
     public static IReadOnlyList<string> Keys =>

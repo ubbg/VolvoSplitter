@@ -47,6 +47,20 @@ public sealed record FlashPartition(string Label, long FileStart, long FileLengt
     /// </summary>
     public bool EmulatedEeprom { get; init; }
 
+    /// <summary>
+    /// Einmal programmierbar: gesetzte Bits lassen sich nicht mehr löschen oder
+    /// überschreiben. Beim MPC5777C ist das der UTEST-Block — dort stehen die
+    /// Konfigurations-Fuses (DCF-Records) für Startart und Takt, die Zensur- und
+    /// JTAG-/Nexus-Sperren, Boot-Schlüssel, Hardware-Kennungen und
+    /// Herstellungsdaten (Referenzhandbuch-Addendum, UTEST-/DCF-Tabelle).
+    ///
+    /// Eine Eigenschaft des Bausteins, keine Aussage über den Inhalt: was dort
+    /// im vorliegenden Abbild steht, sagt weiterhin der Zustand des Blocks.
+    /// Für die Anzeige ist es der wichtigste Unterschied überhaupt — ein Fehler
+    /// in gewöhnlichem Flash kostet einen Schreibvorgang, hier den Baustein.
+    /// </summary>
+    public bool Otp { get; init; }
+
     /// <summary>CPU-Adresse zu einem Datei-Offset in diesem Block.</summary>
     public long? ToCpu(long fileOffset) =>
         CpuStart is { } cpu && Contains(fileOffset) ? cpu + (fileOffset - FileStart) : null;
@@ -73,6 +87,10 @@ public enum PartitionState
 public sealed record PartitionInfo(FlashPartition Partition, PartitionState State, string Description)
 {
     public string Label => Partition.Label;
+
+    /// <summary>Einmal programmierbar — siehe <see cref="FlashPartition.Otp"/>.</summary>
+    public bool Otp => Partition.Otp;
+
     public string FileRange => Partition.FileRange;
     public string CpuRange => Partition.CpuRange ?? "nicht zuzuordnen";
     public string SizeText => $"{Partition.FileLength:N0} B";

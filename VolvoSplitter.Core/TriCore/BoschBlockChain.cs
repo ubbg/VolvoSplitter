@@ -996,7 +996,8 @@ public static class BoschBlockChain
             sectors.Add(new SectorInfo
             {
                 Kind = KindOf(block.Id),
-                Label = block.IdName + (block.Otp ? " · OTP" : ""),
+                Label = block.IdName,
+                Otp = block.Otp,
                 Prefix = $"blk{i + 1:00}_",
                 Start = block.FileStart,
                 CpuOffset = block.CpuStart,

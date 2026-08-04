@@ -192,14 +192,47 @@ public class EcuDetectorTests
         var dump = FlashDump.FromBytes(TriCoreDump.SampleMed17Image(), "med17.bin");
         var block = dump.Sectors[0];
 
+        // Zurückschreiben heißt: Werte rechnen und stellen, Bytes nach Belieben
+        // patchen. Das bleibt zu — daran ändert der Blockübertrag nichts.
         Assert.False(dump.Profile.SupportsWriteBack);
 
         Assert.Throws<InvalidOperationException>(() => dump.RepairCrc(block));
         Assert.Throws<InvalidOperationException>(() => dump.ReplaceSector(block, new byte[0x1000], true));
         Assert.Throws<InvalidOperationException>(() => dump.PatchUInt32Be(0, 0));
-        Assert.Throws<InvalidOperationException>(() => dump.Save(TestDump.TempPath()));
 
         Assert.False(dump.IsModified);
+    }
+
+    [Fact]
+    public void TriCoreProfile_AllowsBlockTransferAndSaving()
+    {
+        var dump = FlashDump.FromBytes(TriCoreDump.SampleMed17Image(), "med17.bin");
+
+        // Speichern hängt nicht mehr an SupportsWriteBack: der Blockübertrag
+        // verändert das Abbild, und ein Vorgang, dessen Ergebnis sich nicht
+        // sichern lässt, wäre folgenlos. Die Übernahme fremder Bytes ist kein
+        // Stellen eigener Werte — deshalb ein eigenes Feld.
+        Assert.True(dump.Profile.SupportsBlockTransfer);
+        Assert.True(dump.Profile.SupportsSaving);
+
+        string path = TestDump.TempPath(".bin");
+        dump.Save(path);
+        Assert.True(File.Exists(path));
+        File.Delete(path);
+    }
+
+    [Fact]
+    public void UnknownProfile_OffersNeitherWriteBackNorTransfer()
+    {
+        // Ohne erkannten Container gibt es keinen Block — und damit auch nichts,
+        // was 1:1 an „dieselbe" Adresse ginge. Speichern bleibt hier zu.
+        var dump = FlashDump.FromBytes(new byte[0x20000], "eeprom.bin");
+
+        Assert.Equal("unknown", dump.Profile.Key);
+        Assert.False(dump.Profile.SupportsBlockTransfer);
+        Assert.False(dump.Profile.SupportsSaving);
+
+        Assert.Throws<InvalidOperationException>(() => dump.Save(TestDump.TempPath()));
     }
 
     // ==================================================================

@@ -15,6 +15,15 @@
     <Color x:Key="WarnColor">#E3A244</Color>
     <Color x:Key="ErasedColor">#191F27</Color>
 
+    <!-- OTP — einmal programmierbar. Eine eigene Farbe, weil die Aussage auf
+         einer anderen Achse liegt als Stahlblau und Bernstein: die beiden sagen,
+         ob die Rechnung aufgeht, diese sagt, dass der Bereich sich nicht mehr
+         löschen lässt. Deshalb Amethyst statt einer dritten Abstufung von Blau:
+         verwechselbar wäre hier das Gefährlichste. -->
+    <Color x:Key="OtpColor">#A98BE0</Color>
+    <Color x:Key="OtpFillColor">#2A2140</Color>
+    <Color x:Key="OtpShadeColor">#3B2F55</Color>
+
     <SolidColorBrush x:Key="InkBrush" Color="{StaticResource InkColor}"/>
     <SolidColorBrush x:Key="PanelBrush" Color="{StaticResource PanelColor}"/>
     <SolidColorBrush x:Key="PanelHoverBrush" Color="{StaticResource PanelHoverColor}"/>
@@ -24,6 +33,9 @@
     <SolidColorBrush x:Key="SignalBrush" Color="{StaticResource SignalColor}"/>
     <SolidColorBrush x:Key="WarnBrush" Color="{StaticResource WarnColor}"/>
     <SolidColorBrush x:Key="ErasedBrush" Color="{StaticResource ErasedColor}"/>
+    <SolidColorBrush x:Key="OtpBrush" Color="{StaticResource OtpColor}"/>
+    <SolidColorBrush x:Key="OtpFillBrush" Color="{StaticResource OtpFillColor}"/>
+    <SolidColorBrush x:Key="OtpShadeBrush" Color="{StaticResource OtpShadeColor}"/>
 
     <!-- ===================================================================
          Schrift. Bahnschrift steht in der DIN-Linie — die Schrift technischer

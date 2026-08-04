@@ -122,7 +122,7 @@ static void Process(string path, bool fixedOnly, string? outRoot, string? profil
             SectorStatus.ChecksumNotStamped => "n.g.",
             _ => "CRC!"
         };
-        Console.WriteLine($"   {flag}  {sector.Label,-28} {sector.PartNumber,-12} " +
+        Console.WriteLine($"   {flag}  {sector.LabelText,-28} {sector.PartNumber,-12} " +
                           $"{sector.SizeText,12}  ->  {Path.GetFileName(outPath)}");
     }
 

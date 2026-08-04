@@ -126,6 +126,23 @@ public class BoschBlockChainTests
     }
 
     [Fact]
+    public void OtpFlag_ReachesTheSectorAsAFieldNotAsText()
+    {
+        var chain = BoschBlockChain.Read(TriCoreDump.SampleMed17Image(), Layout(0x800000));
+        var sectors = BoschBlockChain.ToSectors(chain.Blocks);
+
+        var tuning = Assert.Single(sectors, s => s.Otp);
+
+        // Das Kennzeichen steht im Modell, damit die Oberfläche es färben kann;
+        // die Bezeichnung bleibt frei davon. Wer keine Farbe hat — Bericht und
+        // Befehlszeile —, nimmt LabelText und bekommt es ausgeschrieben.
+        Assert.DoesNotContain("OTP", tuning.Label);
+        Assert.EndsWith(" · OTP", tuning.LabelText);
+
+        Assert.All(sectors.Where(s => !s.Otp), s => Assert.Equal(s.Label, s.LabelText));
+    }
+
+    [Fact]
     public void BlockGaps_AreReportedWithoutInterpretation()
     {
         var chain = BoschBlockChain.Read(TriCoreDump.SampleMed17Image(), Layout(0x800000));

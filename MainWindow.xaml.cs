@@ -14,7 +14,22 @@ namespace VolvoSplitter;
 
 public partial class MainWindow : Window
 {
-    private FlashDump? _dump;
+    /// <summary>
+    /// Das Abbild, das bearbeitet und gespeichert wird. Alles Verändernde meint
+    /// dieses — Prüfsumme stellen, Sektor ersetzen, Block übernehmen, speichern,
+    /// schließen. Hieß bis v1.3.0 <c>_dump</c>; mit zwei Abbildern im Fenster
+    /// benennt das nichts mehr.
+    /// </summary>
+    private FlashDump? _target;
+
+    /// <summary>
+    /// Zweites Abbild, aus dem einzelne Blöcke übernommen werden. Wird
+    /// ausschließlich gelesen: kein Pfad in dieser Datei ruft darauf
+    /// <c>RepairCrc</c>, <c>PatchUInt32Be</c>, <c>ReplaceSector</c>,
+    /// <c>CopyBlockFrom</c> oder <c>Save</c>. Es gibt für die Quelle keinen
+    /// Speichern-Knopf, weil es nichts zu speichern gibt.
+    /// </summary>
+    private FlashDump? _source;
 
     public MainWindow()
     {
@@ -26,8 +41,12 @@ public partial class MainWindow : Window
 
         Loaded += (_, _) =>
         {
-            if (App.StartupFile is { } path && File.Exists(path))
-                LoadFile(path);
+            if (App.StartupFile is not { } path || !File.Exists(path)) return;
+
+            LoadFile(path);
+
+            if (_target is not null && App.StartupSource is { } second && File.Exists(second))
+                LoadSource(second);
         };
     }
 
@@ -53,7 +72,7 @@ public partial class MainWindow : Window
 
         try
         {
-            _dump = FlashDump.Load(path, FixedOnly);
+            _target = FlashDump.Load(path, FixedOnly);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -78,15 +97,15 @@ public partial class MainWindow : Window
 
     private void Refresh()
     {
-        if (_dump is null) return;
+        if (_target is null) return;
 
-        FileNameText.Text = _dump.FileName;
-        FileMetaText.Text = $"{_dump.Size:N0} B  ·  {Hex.Addr(_dump.Size)}  ·  " +
-                            $"{_dump.Profile.FamilyName}  ·  {_dump.Profile.MicroName}  ·  " +
-                            _dump.Profile.Manufacturer;
+        FileNameText.Text = _target.FileName;
+        FileMetaText.Text = $"{_target.Size:N0} B  ·  {Hex.Addr(_target.Size)}  ·  " +
+                            $"{_target.Profile.FamilyName}  ·  {_target.Profile.MicroName}  ·  " +
+                            _target.Profile.Manufacturer;
 
-        ModifiedBadge.Visibility = _dump.IsModified ? Visibility.Visible : Visibility.Collapsed;
-        SaveDumpButton.Visibility = _dump.IsModified && Writable
+        ModifiedBadge.Visibility = _target.IsModified ? Visibility.Visible : Visibility.Collapsed;
+        SaveDumpButton.Visibility = _target.IsModified && Saveable
             ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateDetectionBadges();
@@ -94,34 +113,50 @@ public partial class MainWindow : Window
         UpdateIdentity();
 
         SectorList.ItemsSource = null;
-        SectorList.ItemsSource = _dump.Sectors;
+        SectorList.ItemsSource = _target.Sectors;
 
         RegionList.ItemsSource = null;
-        RegionList.ItemsSource = _dump.Regions;
-        RegionSection.Visibility = _dump.Regions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RegionList.ItemsSource = _target.Regions;
+        RegionSection.Visibility = _target.Regions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         PartitionList.ItemsSource = null;
-        PartitionList.ItemsSource = _dump.Partitions;
-        PartitionSection.Visibility = _dump.Partitions.Count > 0
+        PartitionList.ItemsSource = _target.Partitions;
+        PartitionSection.Visibility = _target.Partitions.Count > 0
             ? Visibility.Visible : Visibility.Collapsed;
 
         // Die Herkunft der Blockkarte steht nicht mehr fest im Text, sondern
         // kommt aus dem Layout selbst.
-        LayoutSourceText.Text = _dump.Layout is { } layout
+        LayoutSourceText.Text = _target.Layout is { } layout
             ? layout.SourceNote + (layout.Complete ? "" : " — Zuordnung nicht vollständig")
             : "";
 
-        Map.ImageSize = _dump.Size;
-        Map.Sectors = _dump.Sectors;
-        Map.Regions = _dump.Regions;
+        Map.ImageSize = _target.Size;
+        Map.Sectors = _target.Sectors;
+        Map.Regions = _target.Regions;
+        Map.Partitions = _target.Layout?.Partitions;
         Map.Highlighted = null;
+
+        // Zuletzt, weil die Vermerke der Quelle am Ziel hängen: ändert sich das
+        // Ziel, ändern sich die Gegenstücke.
+        RefreshSource();
 
         UpdateStatusLine();
         AnimateCards();
     }
 
     /// <summary>Das erkannte Profil sieht Zurückschreiben vor.</summary>
-    private bool Writable => _dump?.Profile.SupportsWriteBack == true;
+    private bool Writable => _target?.Profile.SupportsWriteBack == true;
+
+    /// <summary>Das Ziel darf einen Block aus einem anderen Abbild übernehmen.</summary>
+    private bool CanReceiveBlocks => _target?.Profile.SupportsBlockTransfer == true;
+
+    /// <summary>
+    /// Es gibt für dieses Abbild überhaupt einen verändernden Vorgang — also
+    /// auch etwas zu speichern. Weiter gefasst als <see cref="Writable"/>: ein
+    /// übernommener Block muss sich sichern lassen, auch dort, wo das Werkzeug
+    /// keine Prüfsumme stellt.
+    /// </summary>
+    private bool Saveable => _target?.Profile.SupportsSaving == true;
 
     /// <summary>
     /// Zwei Abzeichen neben dem Dateinamen: eine knappe Erkennung wird als
@@ -130,9 +165,9 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateDetectionBadges()
     {
-        if (_dump is null) return;
+        if (_target is null) return;
 
-        var detection = _dump.Detection;
+        var detection = _target.Detection;
         bool unsure = detection.Ambiguous || detection.DeviceAmbiguous;
 
         AmbiguousBadge.Visibility = unsure ? Visibility.Visible : Visibility.Collapsed;
@@ -144,17 +179,19 @@ public partial class MainWindow : Window
         ReadOnlyBadge.Visibility = Writable ? Visibility.Collapsed : Visibility.Visible;
         ReadOnlyBadge.ToolTip = Writable
             ? null
-            : $"Für {_dump.Profile.FamilyName} werden Prüfsummen gerechnet und gemeldet, " +
-              "aber nicht gestellt. Speichern, Korrigieren und Ersetzen sind deshalb abgeschaltet.";
+            : $"Für {_target.Profile.FamilyName} werden Prüfsummen gerechnet und gemeldet, " +
+              "aber nicht gestellt. Korrigieren und Ersetzen sind deshalb abgeschaltet. " +
+              "Ein Block lässt sich aus einem zweiten Abbild 1:1 übernehmen — dabei werden " +
+              "Bytes übernommen, nicht Werte gestellt.";
     }
 
     private void UpdateIdentity()
     {
-        if (_dump is null) return;
+        if (_target is null) return;
 
-        var vehicle = _dump.Vehicle;
-        var report = _dump.Report;
-        var identity = _dump.Identity;
+        var vehicle = _target.Vehicle;
+        var report = _target.Report;
+        var identity = _target.Identity;
 
         if (vehicle is null && report is null && identity is null)
         {
@@ -224,9 +261,9 @@ public partial class MainWindow : Window
 
         if (VagEcuCatalog.Find(identity.EcuType) is { } entry)
             parts.Add(entry.Display + " (Angabe aus der Steuergerätetabelle)");
-        if (_dump?.Chain.Variant is { } variant)
+        if (_target?.Chain.Variant is { } variant)
             parts.Add($"Variante {variant}");
-        if (_dump?.Chain.Cvn is { } cvn)
+        if (_target?.Chain.Cvn is { } cvn)
             parts.Add($"CVN {cvn.ValueText}");
 
         EcuMetaText.Text = string.Join("   ·   ", parts);
@@ -235,7 +272,7 @@ public partial class MainWindow : Window
 
     private void UpdateStatusLine(string? message = null)
     {
-        if (_dump is null) return;
+        if (_target is null) return;
 
         if (message is not null)
         {
@@ -243,14 +280,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        int found = _dump.Sectors.Count(s => s.Present);
-        int mismatched = _dump.Sectors.Count(s => s.Status == SectorStatus.CrcMismatch);
-        int missing = _dump.Sectors.Count(s => !s.Present);
+        int found = _target.Sectors.Count(s => s.Present);
+        int mismatched = _target.Sectors.Count(s => s.Status == SectorStatus.CrcMismatch);
+        int missing = _target.Sectors.Count(s => !s.Present);
 
         var parts = new List<string> { $"{found} Sektoren gefunden" };
         if (mismatched > 0) parts.Add($"{mismatched} × Prüfsumme weicht ab");
         if (missing > 0) parts.Add($"{missing} nicht gefunden");
-        if (_dump.Regions.Count > 0) parts.Add($"{_dump.Regions.Count} Bereiche ohne Kopf");
+        if (_target.Regions.Count > 0) parts.Add($"{_target.Regions.Count} Bereiche ohne Kopf");
 
         StatusLine.Text = string.Join("   ·   ", parts);
         ExtractAllButton.IsEnabled = found > 0;
@@ -298,7 +335,7 @@ public partial class MainWindow : Window
             Filter = "Flash-Abbilder (*.mpc;*.bin;*.ori)|*.mpc;*.bin;*.ori|Alle Dateien (*.*)|*.*",
             CheckFileExists = true
         };
-        if (_dump is not null) dialog.InitialDirectory = _dump.Directory;
+        if (_target is not null) dialog.InitialDirectory = _target.Directory;
         if (dialog.ShowDialog(this) == true) LoadFile(dialog.FileName);
     }
 
@@ -323,28 +360,55 @@ public partial class MainWindow : Window
         DropHint.Text = "Flash-Abbild hierher ziehen";
     }
 
+    /// <summary>
+    /// Eine Datei wird das Ziel — wie bisher. Zwei Dateien auf einmal sind die
+    /// eindeutige Geste für „beide öffnen": die erste als Ziel, die zweite als
+    /// Quelle. Eine Rückfrage bei jeder Einzelablage wäre der Preis dafür, eine
+    /// eingespielte Geste mehrdeutig zu machen.
+    /// </summary>
     private void OnDrop(object sender, DragEventArgs e)
     {
         ResetDropZone();
-        if (e.Data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files)
-            LoadFile(files[0]);
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } files) return;
+
+        LoadFile(files[0]);
+
+        if (files.Length > 1 && _target is not null)
+            LoadSource(files[1]);
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.KeyboardDevice.Modifiers != ModifierKeys.Control) return;
+        var modifiers = e.KeyboardDevice.Modifiers;
+        bool shift = modifiers.HasFlag(ModifierKeys.Shift);
+
+        // Alt und Windows-Taste bleiben außen vor — die gehören dem System.
+        // Umschalt wird dagegen ausgewertet, und deshalb muss jeder bestehende
+        // Zweig es ausdrücklich ausschließen: sonst löste Strg+Umschalt+S
+        // plötzlich Speichern aus.
+        if (!modifiers.HasFlag(ModifierKeys.Control) ||
+            modifiers.HasFlag(ModifierKeys.Alt) ||
+            modifiers.HasFlag(ModifierKeys.Windows)) return;
 
         switch (e.Key)
         {
-            case Key.O:
+            case Key.O when !shift:
                 PickFile();
                 e.Handled = true;
                 break;
-            case Key.S when _dump?.IsModified == true && Writable:
+            case Key.O when shift && _target is not null:
+                PickSourceFile();
+                e.Handled = true;
+                break;
+            case Key.W when shift && _source is not null:
+                CloseSource();
+                e.Handled = true;
+                break;
+            case Key.S when !shift && _target?.IsModified == true && Saveable:
                 SaveDump();
                 e.Handled = true;
                 break;
-            case Key.E when _dump is not null:
+            case Key.E when !shift && _target is not null:
                 ExtractAll();
                 e.Handled = true;
                 break;
@@ -355,16 +419,23 @@ public partial class MainWindow : Window
     // Sektoraktionen
     // ==================================================================
 
+    /// <summary>
+    /// Der Sektor hinter einem Bedienelement. Die Quellleiste bindet
+    /// ausdrücklich an <see cref="SourceBlock"/> und nicht an
+    /// <see cref="SectorInfo"/> — deshalb liefert das hier für alles in der
+    /// Leiste null, und jeder Zielpfad steigt an seiner ersten Zeile aus, ohne
+    /// dass sich jemand daran erinnern muss.
+    /// </summary>
     private static SectorInfo? SectorOf(object sender) =>
         (sender as FrameworkElement)?.DataContext as SectorInfo;
 
     private void OnExtractSectorClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null || SectorOf(sender) is not { } sector) return;
+        if (_target is null || SectorOf(sender) is not { } sector) return;
 
         try
         {
-            string path = _dump.ExtractSector(sector);
+            string path = _target.ExtractSector(sector);
             // Drei Zustände, drei Sätze. Über die Verneinung von CrcOk zu gehen
             // hieße, den nie gestellten Block einer Abweichung zu bezichtigen.
             sector.Note = sector.Status switch
@@ -385,20 +456,20 @@ public partial class MainWindow : Window
 
     private void OnExportSRecordClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null || SectorOf(sender) is not { } sector) return;
+        if (_target is null || SectorOf(sender) is not { } sector) return;
 
         var dialog = new SaveFileDialog
         {
             Title = "Als S-Record speichern",
             FileName = sector.OutputName + ".s3",
             Filter = "Motorola S-Record (*.s3)|*.s3|Alle Dateien (*.*)|*.*",
-            InitialDirectory = _dump.Directory
+            InitialDirectory = _target.Directory
         };
         if (dialog.ShowDialog(this) != true) return;
 
         try
         {
-            _dump.ExportSRecord(sector, dialog.FileName);
+            _target.ExportSRecord(sector, dialog.FileName);
             sector.Note = $"S-Record geschrieben nach {dialog.FileName}  " +
                           $"(Ladeadresse 0x{sector.CpuOffset:X6})";
             UpdateStatusLine($"{Path.GetFileName(dialog.FileName)} geschrieben");
@@ -411,12 +482,12 @@ public partial class MainWindow : Window
 
     private void OnRepairCrcClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null || !Writable || SectorOf(sender) is not { } sector) return;
+        if (_target is null || !Writable || SectorOf(sender) is not { } sector) return;
 
-        var repair = _dump.RepairCrc(sector);
-        _dump.Analyze(FixedOnly);
+        var repair = _target.RepairCrc(sector);
+        _target.Analyze(FixedOnly);
 
-        var repaired = _dump.Sectors.FirstOrDefault(s => s.Start == sector.Start);
+        var repaired = _target.Sectors.FirstOrDefault(s => s.Start == sector.Start);
         if (repaired is not null)
         {
             string note = $"Prüfsumme korrigiert: 0x{repair.OldCrc:X8} → 0x{repair.NewCrc:X8}. " +
@@ -445,7 +516,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void OfferCopyUpdate(FlashDump.CrcRepair repair)
     {
-        if (_dump is null) return;
+        if (_target is null) return;
 
         string where = string.Join("\n   ", repair.StaleCopies.Select(a => $"0x{a:X6}"));
 
@@ -464,31 +535,31 @@ public partial class MainWindow : Window
         if (answer != MessageBoxResult.Yes) return;
 
         foreach (long offset in repair.StaleCopies)
-            _dump.PatchUInt32Be(offset, repair.NewCrc);
+            _target.PatchUInt32Be(offset, repair.NewCrc);
 
-        _dump.Analyze(FixedOnly);
+        _target.Analyze(FixedOnly);
         Refresh();
         UpdateStatusLine($"{repair.StaleCopies.Count} Kopie(n) auf 0x{repair.NewCrc:X8} gesetzt");
     }
 
     private void OnExtractRegionClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null || (sender as FrameworkElement)?.DataContext is not FlashRegion region) return;
+        if (_target is null || (sender as FrameworkElement)?.DataContext is not FlashRegion region) return;
 
-        string stem = Path.GetFileNameWithoutExtension(_dump.FileName);
+        string stem = Path.GetFileNameWithoutExtension(_target.FileName);
         var dialog = new SaveFileDialog
         {
             Title = $"{region.Label} herausschreiben",
             FileName = $"{stem}_0x{region.Start:X6}-0x{region.End:X6}.bin",
             Filter = "Rohdaten (*.bin)|*.bin|Alle Dateien (*.*)|*.*",
-            InitialDirectory = _dump.Directory
+            InitialDirectory = _target.Directory
         };
         if (dialog.ShowDialog(this) != true) return;
 
         try
         {
             File.WriteAllBytes(dialog.FileName,
-                               _dump.Raw.Slice((int)region.Start, (int)region.Length).ToArray());
+                               _target.Raw.Slice((int)region.Start, (int)region.Length).ToArray());
             UpdateStatusLine($"{Path.GetFileName(dialog.FileName)} geschrieben ({region.SizeText})");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -499,14 +570,14 @@ public partial class MainWindow : Window
 
     private void OnReplaceSectorClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null || !Writable || SectorOf(sender) is not { } sector) return;
+        if (_target is null || !Writable || SectorOf(sender) is not { } sector) return;
 
         var dialog = new OpenFileDialog
         {
             Title = $"{sector.Label} ersetzen durch…",
             FileName = sector.OutputName,
             Filter = "Sektordateien (*.*)|*.*",
-            InitialDirectory = _dump.Directory,
+            InitialDirectory = _target.Directory,
             CheckFileExists = true
         };
         if (dialog.ShowDialog(this) != true) return;
@@ -514,10 +585,10 @@ public partial class MainWindow : Window
         try
         {
             byte[] replacement = File.ReadAllBytes(dialog.FileName);
-            var result = _dump.ReplaceSector(sector, replacement, repairCrc: true);
-            _dump.Analyze(FixedOnly);
+            var result = _target.ReplaceSector(sector, replacement, repairCrc: true);
+            _target.Analyze(FixedOnly);
 
-            var replaced = _dump.Sectors.FirstOrDefault(s => s.Start == sector.Start);
+            var replaced = _target.Sectors.FirstOrDefault(s => s.Start == sector.Start);
             if (replaced is not null)
             {
                 string note = $"Ersetzt durch {Path.GetFileName(dialog.FileName)} " +
@@ -561,6 +632,313 @@ public partial class MainWindow : Window
     }
 
     // ==================================================================
+    // Quelle: zweites Abbild, aus dem Blöcke übernommen werden
+    // ==================================================================
+
+    private void OnOpenSourceClick(object sender, RoutedEventArgs e) => PickSourceFile();
+
+    private void PickSourceFile()
+    {
+        if (_target is null) return;
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "Quelle wählen — wird nur gelesen",
+            Filter = "Flash-Abbilder (*.mpc;*.bin;*.ori)|*.mpc;*.bin;*.ori|Alle Dateien (*.*)|*.*",
+            InitialDirectory = _target.Directory,
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) == true) LoadSource(dialog.FileName);
+    }
+
+    /// <summary>
+    /// Lädt das zweite Abbild. Anders als <see cref="LoadFile"/> ohne Rückfrage
+    /// nach ungesicherten Änderungen: hier geht nichts verloren, das Ziel bleibt
+    /// unangetastet.
+    /// </summary>
+    private void LoadSource(string path)
+    {
+        try
+        {
+            _source = FlashDump.Load(path, FixedOnly);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                      or OutOfMemoryException)
+        {
+            ShowProblem("Quelle lässt sich nicht laden", ex.Message);
+            return;
+        }
+
+        bool wasClosed = SourcePane.Visibility != Visibility.Visible;
+        SourcePane.Visibility = Visibility.Visible;
+        if (wasClosed) GrowForSource();
+
+        Refresh();
+        UpdateStatusLine($"Quelle {_source.FileName} geöffnet — wird nur gelesen");
+    }
+
+    private void OnCloseSourceClick(object sender, RoutedEventArgs e) => CloseSource();
+
+    /// <summary>
+    /// Schließt die Quelle. Keine Rückfrage: an ihr wurde nichts geändert, weil
+    /// an ihr nichts geändert werden kann. Das Fenster behält seine Breite — sie
+    /// zurückzunehmen hieße, dem Nutzer eine Größe wegzunehmen, die inzwischen
+    /// seine sein kann.
+    /// </summary>
+    private void CloseSource()
+    {
+        _source = null;
+        SourcePane.Visibility = Visibility.Collapsed;
+        SourceList.ItemsSource = null;
+        TargetRoleText.Visibility = Visibility.Collapsed;
+        UpdateStatusLine("Quelle geschlossen");
+    }
+
+    /// <summary>
+    /// Tauscht die Rollen. Zuerst die Rückfrage nach ungesicherten Änderungen:
+    /// sonst wanderte das geänderte Ziel in eine Fläche, aus der es sich nicht
+    /// speichern lässt.
+    /// </summary>
+    private void OnSwapRolesClick(object sender, RoutedEventArgs e)
+    {
+        if (_target is null || _source is null) return;
+        if (!ConfirmDiscardChanges()) return;
+
+        (_target, _source) = (_source, _target);
+
+        Refresh();
+        UpdateStatusLine($"Rollen getauscht — Ziel ist jetzt {_target.FileName}");
+    }
+
+    /// <summary>
+    /// Macht das Fenster einmalig um die Breite der Leiste breiter, soweit der
+    /// Bildschirm es hergibt. Die Mindestbreite bleibt, wie sie ist: sie gilt
+    /// auch ohne Quelle, und sie anzuheben bestrafte den Normalfall.
+    /// </summary>
+    private void GrowForSource()
+    {
+        if (WindowState != WindowState.Normal) return;
+
+        double room = SystemParameters.WorkArea.Right - Left;
+        Width = Math.Min(Width + SourcePane.Width, Math.Max(Width, room));
+    }
+
+    /// <summary>
+    /// Schreibt Kopf und Liste der Quellleiste neu. Läuft aus
+    /// <see cref="Refresh"/> mit, weil jeder Vermerk der Quelle eine Aussage
+    /// über das Ziel ist — ändert sich das Ziel, ändern sich die Vermerke.
+    /// </summary>
+    private void RefreshSource()
+    {
+        if (_source is null || _target is null)
+        {
+            SourcePane.Visibility = Visibility.Collapsed;
+            TargetRoleText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        TargetRoleText.Visibility = Visibility.Visible;
+
+        SourceFileNameText.Text = _source.FileName;
+        SourceMetaText.Text = $"{_source.Size:N0} B  ·  {_source.Profile.FamilyName}  ·  " +
+                              $"{_source.Sectors.Count(s => s.Present)} Blöcke";
+
+        string? notice = SourceNotice();
+        SourceNoticeText.Text = notice ?? "";
+        SourceNoticeText.Visibility = notice is null ? Visibility.Collapsed : Visibility.Visible;
+
+        // Der Plan kommt aus derselben Prüfung, die auch der Vorgang benutzt.
+        // Deshalb kann die Karte nichts anderes behaupten, als der Knopf tut.
+        var blocks = _source.Sectors
+                            .Where(s => s.Present)
+                            .Select(s => new SourceBlock(s, BlockTransfer.Prepare(_source, s, _target)))
+                            .ToList();
+
+        SourceList.ItemsSource = null;
+        SourceList.ItemsSource = blocks;
+
+        SourceEmptyText.Visibility = blocks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Ein Grund, der für das ganze Abbild gilt und deshalb nicht an jeder Karte
+    /// wiederholt werden muss. Null, wenn nichts im Weg steht.
+    /// </summary>
+    private string? SourceNotice()
+    {
+        if (_source is null || _target is null) return null;
+
+        if (string.Equals(_source.SourcePath, _target.SourcePath,
+                          StringComparison.OrdinalIgnoreCase))
+            return "Dieselbe Datei wie das Ziel — die Quelle zeigt den Stand auf der Platte, " +
+                   "das Ziel die geänderte Arbeitskopie.";
+
+        if (!CanReceiveBlocks)
+            return $"Für {_target.Profile.FamilyName} ist kein Blockübertrag vorgesehen: ohne " +
+                   "erkannte Blockstruktur gibt es im Ziel keinen Block, der ein Gegenstück wäre.";
+
+        if (_source.Profile.Container != _target.Profile.Container)
+            return $"Quelle ({_source.Profile.FamilyName}) und Ziel ({_target.Profile.FamilyName}) " +
+                   "haben verschiedene Containerformate — ein Block der einen Art hat in der " +
+                   "anderen kein Gegenstück.";
+
+        return null;
+    }
+
+    private static SourceBlock? SourceBlockOf(object sender) =>
+        (sender as FrameworkElement)?.DataContext as SourceBlock;
+
+    /// <summary>
+    /// Übernimmt einen Block der Quelle ins Ziel. Der Aufbau folgt
+    /// <see cref="OnReplaceSectorClick"/>; es fehlt der IO-Fänger, weil keine
+    /// Datei angefasst wird — die Bytes stehen schon im Speicher.
+    /// </summary>
+    private void OnSendToTargetClick(object sender, RoutedEventArgs e)
+    {
+        if (_target is null || _source is null || SourceBlockOf(sender) is not { } item) return;
+
+        // Noch einmal prüfen: zwischen dem Auffrischen der Karte und diesem
+        // Klick kann sich das Ziel geändert haben.
+        var plan = BlockTransfer.Prepare(_source, item.Sector, _target);
+
+        if (!plan.Possible)
+        {
+            ShowProblem("Kein Gegenstück im Ziel", plan.RejectionText);
+            Refresh();
+            return;
+        }
+
+        if (plan.TargetBlock is not { } hit) return;
+        if (!OfferBlockCopy(plan, hit)) return;
+
+        try
+        {
+            var result = _target.CopyBlockFrom(plan, FixedOnly);
+
+            // Analyze baut neue Objekte — der Vermerk gehört an den
+            // wiedergefundenen Block, nicht an den alten Verweis.
+            if (_target.Sectors.FirstOrDefault(s => s.Start == hit.Start) is { } copied)
+                copied.Note = CopyNote(item.Sector, result);
+
+            item.Sector.Note = $"→ nach {Hex.Addr(hit.CpuOffset)} ins Ziel übernommen";
+
+            Refresh();
+            UpdateStatusLine($"{hit.Label} aus {_source.FileName} übernommen — " +
+                             "Dump speichern nicht vergessen");
+        }
+        catch (InvalidOperationException ex)
+        {
+            ShowProblem("Block passt nicht", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Fragt vor dem Überschreiben. Ausgeschrieben wird, was verschwindet, was
+    /// an seine Stelle tritt und was das Werkzeug dabei ausdrücklich
+    /// <em>nicht</em> tut — gerade der letzte Teil ist der, den man hinterher
+    /// braucht. Vorgabe ist Nein.
+    /// </summary>
+    private bool OfferBlockCopy(BlockTransferPlan plan, SectorInfo hit)
+    {
+        if (_source is null || _target is null) return false;
+
+        var origin = plan.SourceBlock;
+
+        var text = new System.Text.StringBuilder()
+            .AppendLine($"Übernehmen: {origin.LabelText}  {origin.PartNumber}")
+            .AppendLine($"aus {_source.FileName}")
+            .AppendLine()
+            .AppendLine($"Überschrieben wird in {_target.FileName}:")
+            .AppendLine($"   {hit.LabelText}  {hit.PartNumber}")
+            .AppendLine($"   Datei {hit.AddressRange}   ·   CPU {hit.CpuAddressRange}")
+            .AppendLine($"   {hit.SizeText}")
+            .AppendLine()
+            .AppendLine($"Geschrieben werden {origin.Length:N0} B an dieselbe CPU-Adresse " +
+                        $"{Hex.Addr(hit.CpuOffset)}.");
+
+        if (plan.TailErased > 0)
+            text.AppendLine($"Die restlichen {plan.TailErased:N0} B bis {Hex.Addr(hit.End)} " +
+                            "werden auf 0xFF gesetzt.");
+
+        foreach (var finding in plan.Warnings)
+            text.AppendLine("   · " + finding.Text);
+
+        text.AppendLine()
+            .AppendLine("Nicht nachgezogen wird:")
+            .AppendLine("   · die Prüfsumme — die Bytes werden unverändert übernommen, " +
+                        "es wird nichts gestellt");
+
+        if (hit.HasChecksumCopies)
+            text.AppendLine($"   · der Prüfwert 0x{hit.CrcStored:X8} des ersetzten Blocks, der " +
+                            "auch bei " +
+                            string.Join(", ", hit.ChecksumCopies.Select(Hex.Addr)) + " steht");
+
+        if (_target.Profile.Container == ContainerKind.BoschBlockChain)
+            text.AppendLine("   · die Blockkette (nextSector), die Prüfsummenstrukturen anderer " +
+                            "Blöcke, die CVN und die Variantenkennung im Dataset-Block");
+
+        text.AppendLine()
+            .AppendLine("Ob das Steuergerät das Ergebnis annimmt, ist aus dem Abbild nicht " +
+                        "erkennbar. Geändert wird die Arbeitskopie im Speicher; die " +
+                        "Originaldatei bleibt unangetastet.")
+            .AppendLine()
+            .Append("Übernehmen?");
+
+        return MessageBox.Show(this, text.ToString(), "Block aus der Quelle übernehmen?",
+                               MessageBoxButton.YesNo, MessageBoxImage.Question,
+                               MessageBoxResult.No) == MessageBoxResult.Yes;
+    }
+
+    /// <summary>Was am übernommenen Block im Ziel stehen bleibt.</summary>
+    private string CopyNote(SectorInfo origin, BlockTransferResult result)
+    {
+        var note = new System.Text.StringBuilder(
+            $"Übernommen aus {_source?.FileName} · {origin.LabelText} {origin.PartNumber} " +
+            $"({result.BytesWritten:N0} B, CPU {Hex.Addr(origin.CpuOffset)})");
+
+        if (!result.HeaderStillValid)
+            note.Append(" — Achtung: der übernommene Block wird an dieser Stelle nicht mehr " +
+                        "als Block gelesen");
+
+        note.Append(result.StatusAfter switch
+        {
+            SectorStatus.Verified => ". Prüfsumme geht auf",
+            SectorStatus.CrcMismatch => ". Prüfsumme weicht ab — sie wurde nicht gestellt",
+            SectorStatus.ChecksumNotStamped => ". Für diesen Block wurde nie eine Prüfsumme gestellt",
+            _ => ""
+        });
+
+        if (result.Broken.Any())
+            note.Append($". {result.Broken.Count()} Prüfsumme(n) anderswo im Abbild gehen " +
+                        "seitdem nicht mehr auf");
+
+        if (result.CvnChanged)
+            note.Append($". Die CVN ist jetzt 0x{result.CvnAfter:X8} " +
+                        $"(vorher 0x{result.CvnBefore:X8}) — sie wird gelesen, nicht gestellt");
+
+        note.Append(". Der Dump ist geändert und noch nicht gespeichert.");
+        return note.ToString();
+    }
+
+    private void OnDragOverSource(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+            ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Ablage auf der Leiste selbst: wird Quelle, ohne Rückfrage. Hier kann
+    /// nichts verlorengehen, und der Ablageort sagt die Absicht.
+    /// </summary>
+    private void OnDropSource(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files)
+            LoadSource(files[0]);
+    }
+
+    // ==================================================================
     // Übergreifende Aktionen
     // ==================================================================
 
@@ -568,14 +946,14 @@ public partial class MainWindow : Window
 
     private void ExtractAll()
     {
-        if (_dump is null) return;
+        if (_target is null) return;
 
         int written = 0, mismatched = 0;
-        foreach (var sector in _dump.Sectors.Where(s => s.Present))
+        foreach (var sector in _target.Sectors.Where(s => s.Present))
         {
             try
             {
-                string path = _dump.ExtractSector(sector);
+                string path = _target.ExtractSector(sector);
                 sector.Note = $"Geschrieben nach {path}";
                 written++;
 
@@ -590,7 +968,7 @@ public partial class MainWindow : Window
             }
         }
 
-        var parts = new List<string> { $"{written} Sektoren geschrieben nach {_dump.Directory}" };
+        var parts = new List<string> { $"{written} Sektoren geschrieben nach {_target.Directory}" };
         if (mismatched > 0) parts.Add($"{mismatched} mit abweichender Prüfsumme");
         UpdateStatusLine(string.Join("   ·   ", parts));
     }
@@ -600,23 +978,23 @@ public partial class MainWindow : Window
     /// <summary>Speichert den Dump. Gibt false zurück, wenn abgebrochen oder fehlgeschlagen.</summary>
     private bool SaveDump()
     {
-        if (_dump is null || !Writable) return true;
+        if (_target is null || !Saveable) return true;
 
-        string stem = Path.GetFileNameWithoutExtension(_dump.FileName);
-        string extension = Path.GetExtension(_dump.FileName);
+        string stem = Path.GetFileNameWithoutExtension(_target.FileName);
+        string extension = Path.GetExtension(_target.FileName);
 
         var dialog = new SaveFileDialog
         {
             Title = "Geänderten Dump speichern",
             FileName = stem + "_mod" + extension,
             Filter = $"Flash-Abbild (*{extension})|*{extension}|Alle Dateien (*.*)|*.*",
-            InitialDirectory = _dump.Directory
+            InitialDirectory = _target.Directory
         };
         if (dialog.ShowDialog(this) != true) return false;
 
         try
         {
-            _dump.Save(dialog.FileName);
+            _target.Save(dialog.FileName);
             Refresh();
             UpdateStatusLine($"Dump geschrieben nach {dialog.FileName}");
             return true;
@@ -634,7 +1012,7 @@ public partial class MainWindow : Window
     /// </summary>
     private bool ConfirmDiscardChanges()
     {
-        if (_dump is null || !_dump.IsModified) return true;
+        if (_target is null || !_target.IsModified) return true;
 
         var answer = MessageBox.Show(this,
             "Der Dump wurde geändert und ist noch nicht gespeichert.\n\n" +
@@ -652,8 +1030,8 @@ public partial class MainWindow : Window
 
     private void OnOpenFolderClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null) return;
-        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_dump.SourcePath}\"")
+        if (_target is null) return;
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_target.SourcePath}\"")
         {
             UseShellExecute = true
         });
@@ -661,11 +1039,11 @@ public partial class MainWindow : Window
 
     private void OnCopyReportClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null) return;
+        if (_target is null) return;
 
         try
         {
-            Clipboard.SetText(DumpReport.Build(_dump));
+            Clipboard.SetText(DumpReport.Build(_target));
             UpdateStatusLine("Bericht in der Zwischenablage");
         }
         catch (System.Runtime.InteropServices.ExternalException)
@@ -677,9 +1055,9 @@ public partial class MainWindow : Window
 
     private void OnSaveReportClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null) return;
+        if (_target is null) return;
 
-        string stem = Path.GetFileNameWithoutExtension(_dump.FileName);
+        string stem = Path.GetFileNameWithoutExtension(_target.FileName);
         var dialog = new SaveFileDialog
         {
             Title = "Bericht speichern",
@@ -689,7 +1067,7 @@ public partial class MainWindow : Window
                      "Markdown (*.md)|*.md|" +
                      "HTML-Seite (*.html)|*.html|" +
                      "Alle Dateien (*.*)|*.*",
-            InitialDirectory = _dump.Directory
+            InitialDirectory = _target.Directory
         };
         if (dialog.ShowDialog(this) != true) return;
 
@@ -699,7 +1077,7 @@ public partial class MainWindow : Window
             // auch, wenn jemand den Namen samt Endung von Hand tippt.
             var format = DumpReport.FormatFor(dialog.FileName);
 
-            File.WriteAllText(dialog.FileName, DumpReport.Build(_dump, format));
+            File.WriteAllText(dialog.FileName, DumpReport.Build(_target, format));
             UpdateStatusLine($"Bericht geschrieben nach {dialog.FileName}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -710,16 +1088,16 @@ public partial class MainWindow : Window
 
     private void OnRepairAllClick(object sender, RoutedEventArgs e)
     {
-        if (_dump is null || !Writable) return;
+        if (_target is null || !Writable) return;
 
-        var mismatched = _dump.Sectors.Where(s => s.Status == SectorStatus.CrcMismatch).ToList();
+        var mismatched = _target.Sectors.Where(s => s.Status == SectorStatus.CrcMismatch).ToList();
         if (mismatched.Count == 0) return;
 
         int withCopies = 0;
         foreach (var sector in mismatched)
-            if (_dump.RepairCrc(sector).StaleCopies.Count > 0) withCopies++;
+            if (_target.RepairCrc(sector).StaleCopies.Count > 0) withCopies++;
 
-        _dump.Analyze(FixedOnly);
+        _target.Analyze(FixedOnly);
         Refresh();
 
         string message = $"{mismatched.Count} Prüfsumme(n) korrigiert";
@@ -729,8 +1107,14 @@ public partial class MainWindow : Window
 
     private void OnScanToggled(object sender, RoutedEventArgs e)
     {
-        if (_dump is null) return;
-        _dump.Analyze(FixedOnly);
+        if (_target is null) return;
+
+        _target.Analyze(FixedOnly);
+
+        // Beide Abbilder nach derselben Regel lesen — sonst würde ein Block der
+        // einen Lesart gegen ein Ziel der anderen gehalten.
+        _source?.Analyze(FixedOnly);
+
         Refresh();
     }
 

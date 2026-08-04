@@ -69,6 +69,10 @@ Das Werkzeug macht daraus:
 
 * Adresskarte des gesamten Abbilds, maßstäblich — Sektoren, Code, opake Blöcke und NVM-Daten
   farblich unterschieden (`Controls/FlashMap.cs`)
+* **Einmal programmierbare Bereiche in eigener Farbe** — der UTEST-Block des MPC5777C und jeder
+  Bosch-Block mit gesetztem OTP-Kennzeichen: in der Adresskarte als umrandete Spur, in der
+  Sektor- bzw. Blockliste als Abzeichen „OTP“. Was dort steht — Konfigurations-Fuses, JTAG-Sperre,
+  Boot-Schlüssel —, lässt sich nicht zurücknehmen; das soll man sehen, bevor man hinlangt
 * Je Sektor eine Karte mit Teilenummer, Datei- und CPU-Adressbereich, Größe, Prüfsummenstand,
   Kopfdaten (`p=`, `d=`, `t=`, `f=`, `b=`) und Hinweis, falls der Sektor nicht an der
   Standardadresse liegt
@@ -77,6 +81,10 @@ Das Werkzeug macht daraus:
 * Einzelne oder alle Prüfsummen korrigieren, inklusive Nachfrage zu veralteten Prüfwertkopien —
   bei TriCore-Abbildern abgeschaltet, sichtbar an einem Abzeichen „nur lesen“
 * Sektor bzw. Block extrahieren, als Motorola-S-Record exportieren oder durch eine Datei ersetzen
+* **Zwei Abbilder gleichzeitig**: das zweite öffnet sich als schmale Leiste und wird nur gelesen;
+  von dort geht ein Block **1:1 an dieselbe CPU-Adresse** ins Ziel. Das Gegenstück wird gesucht,
+  nicht gewählt — gibt es keines, steht der Grund auf der Karte und der Knopf fehlt. Gilt auch für
+  TriCore-Abbilder, weil dabei Bytes übernommen und keine Werte gestellt werden
 * Bereiche ohne Kopf einzeln herausschreiben
 * Befund in die Zwischenablage oder als Textdatei
 * Dunkles Thema samt dunkler Titelleiste (`Native/WindowTheme.cs`)
@@ -940,9 +948,16 @@ Partition entsprechen, in der der Block liegt.
 ## Prüfsummen korrigieren
 
 **Nur für die Volvo-Geräte.** Bei TriCore-Abbildern werden Prüfsummen gerechnet und gemeldet,
-aber nicht gestellt: `Speichern`, `Prüfsumme korrigieren` und `Ersetzen…` sind abgeschaltet, und
-die Bibliothek wirft `InvalidOperationException`. Die Prüfsummenkorrektur wäre mit dem
+aber nicht gestellt: `Prüfsumme korrigieren` und `Ersetzen…` sind abgeschaltet, und die
+Bibliothek wirft `InvalidOperationException`. Die Prüfsummenkorrektur wäre mit dem
 vorliegenden Material technisch möglich, ist aber nicht Aufgabe dieses Werkzeugs.
+
+Es gibt genau einen verändernden Vorgang, der auch für TriCore-Abbilder
+zugelassen ist: die [1:1-Übernahme eines Blocks](#zwei-abbilder-block-übernehmen) aus einem
+zweiten geöffneten Abbild. Dabei werden Bytes übernommen, die dort schon stehen — es wird
+nichts gerechnet und nichts gestellt. Speichern ist deshalb nicht mehr an
+`SupportsWriteBack` gebunden, sondern an `SupportsSaving`: ein Vorgang, dessen Ergebnis sich
+nicht sichern lässt, wäre folgenlos.
 
 Ein Sektor mit abweichender CRC32 wird gemeldet, aber weiterhin gelesen, extrahiert und
 geschrieben. Korrigieren geht einzeln oder für alle Sektoren auf einmal.
@@ -967,6 +982,40 @@ Die Prüfsumme wird nur dann neu berechnet, wenn die Ersatzdatei **selbst einen 
 Sektorkopf** trägt — Länge und CPU-Offset stammen dann aus diesem Kopf, nicht aus dem ersetzten
 Sektor. Nennt die Ersatzdatei einen anderen CPU-Offset als der ersetzte Sektor, wird das
 gemeldet.
+
+### Zwei Abbilder, Block übernehmen
+
+Über **Quelle öffnen…** (oder `Strg+Umschalt+O`, oder zwei Dateien auf einmal ins Fenster
+ziehen) lässt sich ein zweites Abbild öffnen. Es erscheint als schmale Leiste links, wird
+**nur gelesen** und hat je Block einen Knopf `→ ins Ziel`.
+
+**Die Kopie geht ausschließlich an dieselbe CPU-Adresse.** Das ist keine Vorsicht, sondern der
+Grund, warum der Vorgang zulässig ist: ein Bosch-Blockkopf trägt `blockEnd`, `nextSector`,
+zwei Tabellenzeiger und je Prüfsummenstruktur zwei Bereichsgrenzen — alles absolute
+CPU-Adressen. `blockEnd == blockStart + size − 4` wird ohne Toleranz geprüft; an eine andere
+Adresse kopiert wäre der Block kein Block mehr. Bei gleicher Adresse bleibt jedes dieser
+Felder gültig, und es muss kein einziges Byte umgeschrieben werden.
+
+Das Gegenstück im Ziel wird deshalb **gesucht, nicht gewählt**: gleiche CPU-Adresse, gleiche
+Blockart (bei Bosch die Kennung aus dem Kopf, nicht die grobe Art — 0x60 und 0x70 sind beide
+„Dataset" und trotzdem verschieden). Gibt es keines, mehrere oder ein unzulässiges, steht der
+Grund auf der Karte und der Knopf erscheint gar nicht erst. Abgelehnt wird, bevor gedrückt
+wird.
+
+Abgelehnt wird unter anderem: ein Zielblock, der **einmal programmierbar** ist (im Steuergerät
+ließe er sich nicht noch einmal beschreiben — aufhebbar, aber nur ausdrücklich); ein Block, der
+über die Grenze des physischen Blocks oder in belegten Platz hineinwüchse; verschiedene
+Containerformate. **Verschiedene Datei-Offsets bei gleicher CPU-Adresse sind dagegen kein
+Fehler**, sondern der Normalfall bei Teilauslesungen — das wird als Feststellung ausgewiesen.
+
+Was der Vorgang **nicht** tut: keine Adressfelder umschreiben, keine Prüfsumme stellen (auch
+bei den Volvo-Geräten nicht — „1:1" hieße sonst nicht 1:1), keine CVN korrigieren, keine
+Prüfwertkopie mitziehen, keine Blockkette ausbessern. Alles davon steht ausgeschrieben in der
+Rückfrage vor dem Überschreiben; die Voreinstellung ist **Nein**.
+
+Danach wird das Zielabbild neu ausgewertet und gemeldet, was sich geändert hat: ob der Block
+am Zielort weiterhin als Block gelesen wird, wie sein Prüfsummenstand jetzt lautet, welche
+Prüfsummen **anderer** Blöcke seitdem nicht mehr aufgehen, und ob die CVN eine andere ist.
 
 ### S-Record-Export
 

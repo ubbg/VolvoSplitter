@@ -58,6 +58,21 @@ public class Mpc5777cLayoutTests
     }
 
     [Fact]
+    public void OnlyUtest_IsMarkedOneTimeProgrammable()
+    {
+        var layout = Full();
+
+        // UTEST trägt Konfigurations-Fuses, Zensur- und JTAG-Sperren, Boot-
+        // Schlüssel und Herstellungsdaten (Referenzhandbuch-Addendum, UTEST-/
+        // DCF-Tabelle) — einmal gesetzt, nicht mehr zurückzunehmen. Der Large
+        // Flash und die vier Low/Mid-Blöcke sind gewöhnliches Flash.
+        Assert.True(layout.PartitionAt(0x840000)!.Otp);
+
+        Assert.All(layout.Partitions.Where(p => p.Type != FlashBlockType.Utest),
+                   p => Assert.False(p.Otp));
+    }
+
+    [Fact]
     public void CseHighBlocks_AreNotPartOfTheContainer()
     {
         // Mit den beiden 16-KiB-CSE-Blöcken wäre die Datei 0x84C000 groß.

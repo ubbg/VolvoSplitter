@@ -167,18 +167,26 @@ public sealed class FlashDump
     /// <summary>
     /// Liest die Bosch-Blockkette. Die Kette wurde bei der Erkennung schon
     /// gelaufen; sie wird hier nur dann erneut gelesen, wenn das Profil von
-    /// Hand vorgegeben wurde.
+    /// Hand vorgegeben wurde — oder wenn die Arbeitskopie inzwischen verändert
+    /// wurde.
+    ///
+    /// Der zweite Fall ist der wichtigere: das Ergebnis der Erkennung ist ein
+    /// Bild des Zustands <em>vor</em> der Änderung. Es danach weiterzureichen
+    /// hieße, Prüfsummen zu melden, die zu anderen Bytes gehören — und genau
+    /// die Prüfsummen sind es, wegen derer nach einem Blockübertrag überhaupt
+    /// jemand hinsieht.
     /// </summary>
     private List<SectorInfo> ReadBoschBlocks()
     {
         if (Layout is null) return [];
 
-        Chain = Detection.Chain.Blocks.Count > 0
+        Chain = !IsModified && Detection.Chain.Blocks.Count > 0
             ? Detection.Chain
             : BoschBlockChain.Read(_data, Layout);
 
-        Identity = Detection.Identity
-                   ?? BoschIdentity.Scan(_data, Chain.Variant, Chain.VariantOffset ?? 0);
+        Identity = !IsModified && Detection.Identity is { } known
+            ? known
+            : BoschIdentity.Scan(_data, Chain.Variant, Chain.VariantOffset ?? 0);
 
         return BoschBlockChain.ToSectors(Chain.Blocks);
     }
@@ -244,7 +252,7 @@ public sealed class FlashDump
 
             var inside = new List<string>();
             inside.AddRange(Sectors.Where(s => s.Present && partition.Contains(s.Start))
-                                   .Select(s => $"Sektor {s.Label}"));
+                                   .Select(s => $"Sektor {s.LabelText}"));
             inside.AddRange(Regions.Where(r => partition.Contains(r.Start))
                                    .Select(r => r.Label));
 
@@ -316,6 +324,16 @@ public sealed class FlashDump
     public byte[] SectorBytes(SectorInfo sector) =>
         _data.AsSpan((int)sector.Start, (int)sector.Length).ToArray();
 
+    /// <summary>
+    /// Ist dieser Bereich der Arbeitskopie vollständig gelöscht (0xFF)? Fragt
+    /// <see cref="BlockTransfer"/>, bevor ein Block über sein bisheriges Ende
+    /// hinaus wächst: gelöschter Platz darf beschrieben werden, belegter nicht,
+    /// solange niemand weiß, was dort steht.
+    /// </summary>
+    public bool IsErased(long start, long length) =>
+        start >= 0 && length >= 0 && start + length <= _data.LongLength &&
+        BinaryHeuristics.IsErased(_data, start, length);
+
     /// <summary>Schreibt den Sektor als Rohdatei. Eine abweichende Prüfsumme
     /// verhindert das nicht — sie wird nur gemeldet.</summary>
     public string ExtractSector(SectorInfo sector, string? targetDirectory = null)
@@ -348,6 +366,36 @@ public sealed class FlashDump
         throw new InvalidOperationException(
             $"Für das Profil „{Profile.FamilyName}\" ist Zurückschreiben nicht vorgesehen. " +
             "Prüfsummen werden gerechnet und gemeldet, aber nicht gestellt.");
+    }
+
+    /// <summary>
+    /// Wirft, wenn das Profil keinen Blockübertrag vorsieht. Das ist ein
+    /// eigener Wächter und nicht <see cref="EnsureWriteBack"/>: hier wird nichts
+    /// gerechnet und nichts gestellt, sondern ein Block übernommen, den ein
+    /// anderes Abbild schon trägt.
+    /// </summary>
+    private void EnsureBlockTransfer()
+    {
+        if (Profile.SupportsBlockTransfer) return;
+
+        throw new InvalidOperationException(
+            $"Für das Profil „{Profile.FamilyName}\" ist kein Blockübertrag vorgesehen: " +
+            "ohne erkannte Blockstruktur gibt es keinen Block, den man übertragen könnte.");
+    }
+
+    /// <summary>
+    /// Wirft, wenn es für dieses Profil überhaupt keinen verändernden Vorgang
+    /// gibt — dann gibt es auch nichts zu speichern. Bewusst weiter gefasst als
+    /// <see cref="EnsureWriteBack"/>: ein übertragener Block muss sich sichern
+    /// lassen, sonst wäre der Übertrag folgenlos.
+    /// </summary>
+    private void EnsureSaveable()
+    {
+        if (Profile.SupportsSaving) return;
+
+        throw new InvalidOperationException(
+            $"Für das Profil „{Profile.FamilyName}\" gibt es keinen verändernden Vorgang — " +
+            "also auch nichts zu speichern.");
     }
 
     /// <summary>Ergebnis einer Prüfsummenkorrektur.</summary>
@@ -447,6 +495,134 @@ public sealed class FlashDump
         return new SectorReplacement(headerFound, sector.CpuOffset, actualCpu);
     }
 
+    // ------------------------------------------------------------------
+    // Blockübertrag aus einem zweiten Abbild
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Übernimmt einen Block aus einem anderen Abbild an <em>dieselbe</em>
+    /// CPU-Adresse. Geschrieben werden ausschließlich die Bytes der Quelle und —
+    /// wenn sie kürzer ist — das Füllmuster bis zum bisherigen Blockende.
+    ///
+    /// Was hier ausdrücklich <em>nicht</em> geschieht: kein Adressfeld wird
+    /// umgeschrieben, keine Prüfsumme gestellt, keine CVN nachgezogen, keine
+    /// Prüfwertkopie mitgeführt. Der Sinn der 1:1-Bedingung ist gerade, dass
+    /// nichts davon nötig ist — <c>blockEnd</c>, <c>nextSector</c> und die
+    /// Tabellenzeiger im übernommenen Kopf stehen absolut im Adressraum und
+    /// bleiben genau deshalb gültig.
+    ///
+    /// Anders als <see cref="RepairCrc"/> ruft dieser Vorgang
+    /// <see cref="Analyze"/> selbst: das Ergebnis <em>ist</em> die Aussage
+    /// darüber, was danach noch aufgeht, und ohne Neuanalyse gäbe es sie nicht.
+    /// </summary>
+    public BlockTransferResult CopyBlockFrom(BlockTransferPlan plan, bool fixedAddressesOnly = false)
+    {
+        EnsureBlockTransfer();
+
+        if (!ReferenceEquals(plan.Target, this))
+            throw new ArgumentException("Der Plan gehört zu einem anderen Zielabbild.", nameof(plan));
+
+        if (plan.TargetBlock is not { } target || !plan.Possible)
+            throw new InvalidOperationException("Der Blockübertrag wurde abgelehnt: " +
+                                                plan.RejectionText);
+
+        // Die 1:1-Bedingung ein zweites Mal, hier im Schreibpfad. Wer freies
+        // Platzieren einbauen will, muss diesen Satz löschen — und das steht
+        // dann im Diff.
+        if (PhysicalLayout.Normalize(target.CpuOffset) !=
+            PhysicalLayout.Normalize(plan.SourceBlock.CpuOffset))
+            throw new InvalidOperationException(
+                "Ein Blockübertrag geht nur an dieselbe CPU-Adresse. Nur so bleiben blockEnd, " +
+                "nextSector und die Tabellenzeiger im übernommenen Kopf gültig — sie stehen " +
+                "absolut im Adressraum und werden nicht umgeschrieben.");
+
+        byte[] bytes = plan.Source.SectorBytes(plan.SourceBlock);
+
+        if (target.Start + bytes.LongLength > _data.LongLength)
+            throw new InvalidOperationException(
+                $"Der Block reicht über das Dateiende hinaus: {bytes.Length:N0} B ab " +
+                $"{Hex.Addr(target.Start)}, die Datei hat {_data.LongLength:N0} B.");
+
+        var before = ChecksumSnapshot();
+        uint? cvnBefore = Chain.Cvn?.Value;
+
+        bytes.CopyTo(_data, (int)target.Start);
+
+        long tail = 0;
+        for (long i = target.Start + bytes.LongLength; i < target.End; i++, tail++)
+            _data[i] = 0xFF;
+
+        IsModified = true;
+        Analyze(fixedAddressesOnly);
+
+        var copied = Sectors.FirstOrDefault(s => s.Start == target.Start);
+        bool valid = copied is { Present: true };
+
+        var findings = new List<TransferFinding>(plan.Findings);
+        AppendChainFinding(findings, target.Start);
+
+        return new BlockTransferResult(
+            plan, bytes.LongLength, tail, valid,
+            copied?.Status ?? SectorStatus.Missing,
+            CompareChecksums(before, ChecksumSnapshot()),
+            findings, cvnBefore, Chain.Cvn?.Value);
+    }
+
+    /// <summary>
+    /// Ergebnis jeder Prüfsummenstruktur des Abbilds, nach Block und Stelle.
+    /// Dreiwertig wie <c>Ok</c> selbst: null heißt „nicht nachgerechnet".
+    /// </summary>
+    private Dictionary<(long Block, int Index), bool?> ChecksumSnapshot() =>
+        Chain.Blocks
+             .SelectMany(b => b.Checksums.Select((c, i) => (Key: (b.FileStart, i), c.Ok)))
+             .ToDictionary(x => x.Key, x => x.Ok);
+
+    /// <summary>
+    /// Was sich zwischen den beiden Momentaufnahmen geändert hat — über das
+    /// ganze Abbild, nicht nur über den übernommenen Block. Eine Struktur eines
+    /// anderen Blocks, deren geprüfter Bereich in den beschriebenen Teil
+    /// hineinreicht, geht danach nicht mehr auf, und das ist gemessen.
+    /// </summary>
+    private List<ChecksumChange> CompareChecksums(
+        Dictionary<(long Block, int Index), bool?> before,
+        Dictionary<(long Block, int Index), bool?> after)
+    {
+        var changes = new List<ChecksumChange>();
+
+        foreach (var key in before.Keys.Union(after.Keys))
+        {
+            before.TryGetValue(key, out bool? was);
+            after.TryGetValue(key, out bool? now);
+            if (was == now) continue;
+
+            string label = Chain.Blocks.FirstOrDefault(b => b.FileStart == key.Block)?.IdName
+                           ?? Hex.Addr(key.Block);
+
+            changes.Add(new ChecksumChange(key.Block, label, key.Index, was, now));
+        }
+
+        return changes;
+    }
+
+    /// <summary>
+    /// Der übernommene <c>nextSector</c> nennt den Nachfolger aus dem
+    /// Quellabbild. Liegt dort im Ziel kein Blockkopf, ist die Kette an dieser
+    /// Stelle umgeleitet — feststellbar erst nach dem Schreiben.
+    /// </summary>
+    private void AppendChainFinding(List<TransferFinding> findings, long fileStart)
+    {
+        if (Chain.Blocks.FirstOrDefault(b => b.FileStart == fileStart) is not { } block) return;
+        if (block.NextCpu is not { } next) return;
+        if (Chain.Blocks.Any(b => PhysicalLayout.Normalize(b.CpuStart) ==
+                                  PhysicalLayout.Normalize(next))) return;
+
+        findings.Add(new TransferFinding(TransferRule.NextSectorLeavesChain,
+            TransferSeverity.Warning,
+            $"Der übernommene Kopf nennt als nächsten Block {Hex.Addr(next)}; dort liegt im " +
+            "Ziel kein Blockkopf. Die Kette ist an dieser Stelle umgeleitet — sie wird " +
+            "gelesen und ausgewiesen, nicht ausgebessert."));
+    }
+
     /// <summary>Platz vom Sektoranfang bis zum nächsten Sektor bzw. Dateiende.</summary>
     public long AvailableSpace(SectorInfo sector)
     {
@@ -459,7 +635,7 @@ public sealed class FlashDump
 
     public void Save(string path)
     {
-        EnsureWriteBack();
+        EnsureSaveable();
         File.WriteAllBytes(path, _data);
         IsModified = false;
     }

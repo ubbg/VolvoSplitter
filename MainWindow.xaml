@@ -64,8 +64,13 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <!-- Rolle nur, solange es eine zweite gibt. Im
+                             Einzelfall wäre „ZIEL" ein Wort ohne Gegenüber. -->
+                        <TextBlock x:Name="TargetRoleText" Style="{StaticResource Eyebrow}"
+                                   Text="ZIEL" Margin="0,0,0,2" Visibility="Collapsed"/>
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock x:Name="FileNameText" Style="{StaticResource MonoLarge}"/>
+                            <TextBlock x:Name="FileNameText" Style="{StaticResource MonoLarge}"
+                                       TextTrimming="CharacterEllipsis"/>
                             <Border x:Name="ModifiedBadge" Style="{StaticResource Badge}"
                                     Margin="12,0,0,0" Visibility="Collapsed"
                                     Background="#3A2C12" BorderBrush="{StaticResource WarnBrush}">
@@ -99,22 +104,227 @@
                                 Margin="0,0,8,0" Click="OnCopyReportClick"/>
                         <Button Content="Bericht speichern…" Style="{StaticResource GhostButton}"
                                 Margin="0,0,8,0" Click="OnSaveReportClick"/>
+                        <Button Content="Quelle öffnen…" Style="{StaticResource GhostButton}"
+                                Margin="0,0,8,0" Click="OnOpenSourceClick"
+                                ToolTip="Zweites Abbild öffnen, aus dem einzelne Blöcke übernommen werden. Es wird nur gelesen.  (Strg+Umschalt+O)"/>
                         <Button Content="Andere Datei" Style="{StaticResource GhostButton}"
                                 Click="OnOpenClick"/>
                     </StackPanel>
                 </Grid>
             </Border>
 
-            <!-- Karte des Adressraums + Inhalt -->
+            <!-- Quelle + Karte des Adressraums + Inhalt -->
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
+                    <!-- Auto: solange die Leiste eingeklappt ist, ist die Spalte
+                         0 breit. Kein Code, der Spaltenbreiten umschaltet — die
+                         Sichtbarkeit der Leiste ist die einzige Wahrheit. -->
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="104"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <c:FlashMap x:Name="Map" Grid.Column="0" Margin="0,20,0,20"/>
+                <!-- ==================================================
+                     Quelle. Links außen, weil die Kopie von hier ins Ziel
+                     läuft: der Knopf heißt „→ ins Ziel" und sein Pfeil zeigt
+                     in Leserichtung auf das, was er meint.
+                     ================================================== -->
+                <Border x:Name="SourcePane" Grid.Column="0" Width="248"
+                        Visibility="Collapsed" AllowDrop="True"
+                        Drop="OnDropSource" DragOver="OnDragOverSource"
+                        Background="{StaticResource PanelBrush}"
+                        BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
 
-                <ScrollViewer Grid.Column="1" Style="{StaticResource CardScroller}"
+                        <StackPanel Grid.Row="0" Margin="14,18,14,12">
+                            <Grid>
+                                <TextBlock Style="{StaticResource Eyebrow}" Text="QUELLE"
+                                           VerticalAlignment="Center"/>
+                                <Button HorizontalAlignment="Right" Content="✕"
+                                        Style="{StaticResource CardAction}" Margin="0"
+                                        Padding="8,2"
+                                        ToolTip="Quelle schließen  (Strg+Umschalt+W)"
+                                        Click="OnCloseSourceClick"/>
+                            </Grid>
+
+                            <!-- Stummes Grau, nicht Bernstein: nur-lesen ist
+                                 eine Tatsache, keine Warnung. -->
+                            <Border Style="{StaticResource Badge}" HorizontalAlignment="Left"
+                                    Margin="0,6,0,0" BorderBrush="{StaticResource LineBrush}">
+                                <TextBlock Style="{StaticResource MonoSmall}"
+                                           Text="wird nur gelesen"
+                                           Foreground="{StaticResource MutedBrush}"/>
+                            </Border>
+
+                            <TextBlock x:Name="SourceFileNameText" Style="{StaticResource Mono}"
+                                       Margin="0,8,0,0" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="SourceMetaText" Style="{StaticResource MonoSmall}"
+                                       Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                            <!-- Gründe, die für das ganze Abbild gelten —
+                                 einmal hier statt an jeder Karte. -->
+                            <TextBlock x:Name="SourceNoticeText" Style="{StaticResource MonoSmall}"
+                                       Margin="0,8,0,0" TextWrapping="Wrap"
+                                       Visibility="Collapsed"
+                                       Foreground="{StaticResource WarnBrush}"/>
+
+                            <Button Content="Rollen tauschen" Style="{StaticResource CardAction}"
+                                    HorizontalAlignment="Left" Margin="0,10,0,0"
+                                    ToolTip="Quelle wird Ziel und umgekehrt. Ungesicherte Änderungen am Ziel werden vorher abgefragt."
+                                    Click="OnSwapRolesClick"/>
+                        </StackPanel>
+
+                        <ScrollViewer Grid.Row="1" Style="{StaticResource CardScroller}"
+                                      Padding="14,0,8,16">
+                            <StackPanel>
+                                <ItemsControl x:Name="SourceList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border x:Name="SourceCard" Style="{StaticResource Card}"
+                                                    Padding="12,10" Margin="0,0,0,8">
+                                                <StackPanel>
+                                                    <Grid>
+                                                        <TextBlock Style="{StaticResource Eyebrow}"
+                                                                   Text="{Binding Sector.Label}"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,0,28,0"/>
+                                                        <Border x:Name="OtpBadge"
+                                                                Style="{StaticResource Badge}"
+                                                                HorizontalAlignment="Right"
+                                                                VerticalAlignment="Top"
+                                                                Visibility="Collapsed" Padding="5,2"
+                                                                Background="{StaticResource OtpFillBrush}"
+                                                                BorderBrush="{StaticResource OtpBrush}"
+                                                                ToolTip="Einmal programmierbar.">
+                                                            <TextBlock Style="{StaticResource MonoSmall}"
+                                                                       Text="OTP"
+                                                                       Foreground="{StaticResource OtpBrush}"/>
+                                                        </Border>
+                                                    </Grid>
+
+                                                    <TextBlock Style="{StaticResource Mono}"
+                                                               Margin="0,5,0,0"
+                                                               Text="{Binding Sector.PartNumber}"/>
+
+                                                    <!-- CPU-Adresse vorn, Datei-Offset gar nicht:
+                                                         die Kopie hängt an der CPU-Adresse. Wo der
+                                                         Block in der Quelldatei liegt, sagt über
+                                                         das Ziel nichts. -->
+                                                    <TextBlock Style="{StaticResource MonoSmall}"
+                                                               Margin="0,5,0,0">
+                                                        <Run Text="CPU "/>
+                                                        <Run Text="{Binding Sector.CpuAddressRange, Mode=OneWay}"/>
+                                                    </TextBlock>
+                                                    <TextBlock Style="{StaticResource MonoSmall}"
+                                                               Margin="0,3,0,0"
+                                                               Text="{Binding Sector.SizeText}"/>
+
+                                                    <TextBlock x:Name="StatusText"
+                                                               Style="{StaticResource MonoSmall}"
+                                                               Margin="0,3,0,0"
+                                                               Text="Prüfsumme stimmt"
+                                                               Foreground="{StaticResource SignalBrush}"/>
+
+                                                    <TextBlock x:Name="MatchText"
+                                                               Style="{StaticResource MonoSmall}"
+                                                               Margin="0,8,0,0" TextWrapping="Wrap"
+                                                               Text="{Binding MatchNote}"/>
+
+                                                    <TextBlock x:Name="WarningText"
+                                                               Style="{StaticResource MonoSmall}"
+                                                               Margin="0,4,0,0" TextWrapping="Wrap"
+                                                               Visibility="Collapsed"
+                                                               Foreground="{StaticResource WarnBrush}"
+                                                               Text="{Binding WarningNote}"/>
+
+                                                    <TextBlock x:Name="IdenticalText"
+                                                               Style="{StaticResource MonoSmall}"
+                                                               Margin="0,4,0,0" TextWrapping="Wrap"
+                                                               Visibility="Collapsed"
+                                                               Text="Kennung, Prüfwert und Größe stimmen bereits überein."/>
+
+                                                    <Button x:Name="SendButton" Content="→ ins Ziel"
+                                                            Style="{StaticResource CardAction}"
+                                                            HorizontalAlignment="Left"
+                                                            Margin="0,10,0,0"
+                                                            Click="OnSendToTargetClick"/>
+
+                                                    <TextBlock x:Name="SourceNoteText"
+                                                               Style="{StaticResource MonoSmall}"
+                                                               Margin="0,8,0,0" TextWrapping="Wrap"
+                                                               Foreground="{StaticResource SignalBrush}"
+                                                               Text="{Binding Sector.Note}"/>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <DataTemplate.Triggers>
+                                                <!-- Kein Gegenstück: die Karte tritt zurück, der
+                                                     Knopf verschwindet. Gedämpft, nicht bernstein —
+                                                     das ist kein Mangel des Abbilds, sondern eine
+                                                     Feststellung über zwei. -->
+                                                <DataTrigger Binding="{Binding CanSend}" Value="False">
+                                                    <Setter TargetName="SourceCard" Property="Opacity"
+                                                            Value="0.55"/>
+                                                    <Setter TargetName="SendButton" Property="Visibility"
+                                                            Value="Collapsed"/>
+                                                </DataTrigger>
+
+                                                <DataTrigger Binding="{Binding HasWarning}" Value="True">
+                                                    <Setter TargetName="WarningText" Property="Visibility"
+                                                            Value="Visible"/>
+                                                </DataTrigger>
+
+                                                <DataTrigger Binding="{Binding LooksIdentical}" Value="True">
+                                                    <Setter TargetName="IdenticalText" Property="Visibility"
+                                                            Value="Visible"/>
+                                                </DataTrigger>
+
+                                                <DataTrigger Binding="{Binding Sector.Note}" Value="{x:Null}">
+                                                    <Setter TargetName="SourceNoteText" Property="Visibility"
+                                                            Value="Collapsed"/>
+                                                </DataTrigger>
+
+                                                <DataTrigger Binding="{Binding Sector.Status}" Value="CrcMismatch">
+                                                    <Setter TargetName="StatusText" Property="Text"
+                                                            Value="Prüfsumme weicht ab"/>
+                                                    <Setter TargetName="StatusText" Property="Foreground"
+                                                            Value="{StaticResource WarnBrush}"/>
+                                                </DataTrigger>
+
+                                                <DataTrigger Binding="{Binding Sector.Status}" Value="ChecksumNotStamped">
+                                                    <Setter TargetName="StatusText" Property="Text"
+                                                            Value="nicht gestellt"/>
+                                                    <Setter TargetName="StatusText" Property="Foreground"
+                                                            Value="{StaticResource MutedBrush}"/>
+                                                </DataTrigger>
+
+                                                <DataTrigger Binding="{Binding Sector.Otp}" Value="True">
+                                                    <Setter TargetName="OtpBadge" Property="Visibility"
+                                                            Value="Visible"/>
+                                                    <Setter TargetName="SourceCard" Property="BorderBrush"
+                                                            Value="{StaticResource OtpBrush}"/>
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="SourceEmptyText" Style="{StaticResource MonoSmall}"
+                                           Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Visibility="Collapsed"
+                                           Text="In diesem Abbild wurde kein Block gelesen."/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
+                <c:FlashMap x:Name="Map" Grid.Column="1" Margin="0,20,0,20"/>
+
+                <ScrollViewer Grid.Column="2" Style="{StaticResource CardScroller}"
                               Padding="8,18,20,18">
                     <StackPanel>
                         <!-- Fahrzeug und Steuergerät -->
@@ -146,15 +356,33 @@
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Style="{StaticResource Eyebrow}"
                                                            Text="{Binding Label}"/>
-                                                <Border x:Name="StatusBadge" Grid.Column="1"
-                                                        Style="{StaticResource Badge}"
-                                                        Background="#12303F"
-                                                        BorderBrush="{StaticResource SignalBrush}">
-                                                    <TextBlock x:Name="StatusText"
-                                                               Style="{StaticResource MonoSmall}"
-                                                               Text="Prüfsumme stimmt"
-                                                               Foreground="{StaticResource SignalBrush}"/>
-                                                </Border>
+
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                    <!-- Einmal programmierbar. Eigene Farbe, weil es
+                                                         eine andere Aussage ist als die Prüfsumme:
+                                                         das Badge daneben sagt, ob die Rechnung
+                                                         aufgeht, dieses, dass hier nichts mehr
+                                                         zurückzunehmen ist. -->
+                                                    <Border x:Name="OtpBadge" Style="{StaticResource Badge}"
+                                                            Margin="0,0,6,0" Visibility="Collapsed"
+                                                            Background="{StaticResource OtpFillBrush}"
+                                                            BorderBrush="{StaticResource OtpBrush}"
+                                                            ToolTip="Einmal programmierbar — Bit 0x00800000 im Kennungswort. Ein gesetztes Bit lässt sich weder löschen noch überschreiben; beim Tuning-Schutz-Block ist genau das der Zweck.">
+                                                        <TextBlock Style="{StaticResource MonoSmall}"
+                                                                   Text="OTP"
+                                                                   Foreground="{StaticResource OtpBrush}"/>
+                                                    </Border>
+
+                                                    <Border x:Name="StatusBadge"
+                                                            Style="{StaticResource Badge}"
+                                                            Background="#12303F"
+                                                            BorderBrush="{StaticResource SignalBrush}">
+                                                        <TextBlock x:Name="StatusText"
+                                                                   Style="{StaticResource MonoSmall}"
+                                                                   Text="Prüfsumme stimmt"
+                                                                   Foreground="{StaticResource SignalBrush}"/>
+                                                    </Border>
+                                                </StackPanel>
                                             </Grid>
 
                                             <TextBlock x:Name="PartNumberText"
@@ -200,21 +428,24 @@
                                                        Text="{Binding Note}"/>
 
                                             <!-- Aktionen -->
-                                            <StackPanel x:Name="Actions" Orientation="Horizontal" Margin="0,14,0,0">
+                                            <!-- WrapPanel statt StackPanel: mit der Quellleiste
+                                                 daneben wird es schmal, und dann soll die Reihe
+                                                 umbrechen statt abgeschnitten zu werden. -->
+                                            <WrapPanel x:Name="Actions" Orientation="Horizontal" Margin="0,10,0,0">
                                                 <Button Content="Extrahieren" Style="{StaticResource CardAction}"
-                                                        Click="OnExtractSectorClick"/>
+                                                        Margin="0,4,6,0" Click="OnExtractSectorClick"/>
                                                 <Button Content="Als S-Record" Style="{StaticResource CardAction}"
-                                                        Click="OnExportSRecordClick"/>
+                                                        Margin="0,4,6,0" Click="OnExportSRecordClick"/>
                                                 <Button x:Name="RepairButton" Content="Prüfsumme korrigieren"
                                                         Style="{StaticResource CardAction}"
-                                                        Visibility="Collapsed"
+                                                        Margin="0,4,6,0" Visibility="Collapsed"
                                                         Click="OnRepairCrcClick"/>
                                                 <Button x:Name="ReplaceButton" Content="Ersetzen…"
                                                         Style="{StaticResource CardAction}"
-                                                        Click="OnReplaceSectorClick"/>
+                                                        Margin="0,4,6,0" Click="OnReplaceSectorClick"/>
                                                 <Button Content="Kopfdaten" Style="{StaticResource CardAction}"
-                                                        Click="OnShowHeaderClick"/>
-                                            </StackPanel>
+                                                        Margin="0,4,6,0" Click="OnShowHeaderClick"/>
+                                            </WrapPanel>
 
                                             <TextBlock x:Name="ReadOnlyText" Style="{StaticResource MonoSmall}"
                                                        Margin="0,8,0,0" TextWrapping="Wrap"
@@ -331,6 +562,16 @@
                                             <Setter TargetName="ReadOnlyText" Property="Visibility" Value="Visible"/>
                                         </DataTrigger>
 
+                                        <!-- OTP: Kennzeichen einblenden und die Karte am Rand
+                                             mitfärben, damit sie sich beim Überfliegen der Liste
+                                             absetzt. Steht hinter den Statuszweigen — die Farbe des
+                                             Rahmens trägt dort keine Aussage, die verlorenginge. -->
+                                        <DataTrigger Binding="{Binding Otp}" Value="True">
+                                            <Setter TargetName="OtpBadge" Property="Visibility" Value="Visible"/>
+                                            <Setter TargetName="CardRoot" Property="BorderBrush"
+                                                    Value="{StaticResource OtpBrush}"/>
+                                        </DataTrigger>
+
                                         <Trigger SourceName="CardRoot" Property="IsMouseOver" Value="True">
                                             <Setter TargetName="CardRoot" Property="Background"
                                                     Value="{StaticResource PanelHoverBrush}"/>
@@ -427,9 +668,27 @@
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
 
-                                                <TextBlock Grid.Column="0" Style="{StaticResource Eyebrow}"
-                                                           Text="{Binding Label}" VerticalAlignment="Top"
-                                                           TextWrapping="Wrap"/>
+                                                <StackPanel Grid.Column="0" VerticalAlignment="Top">
+                                                    <TextBlock x:Name="PartitionLabel"
+                                                               Style="{StaticResource Eyebrow}"
+                                                               Text="{Binding Label}"
+                                                               TextWrapping="Wrap"/>
+
+                                                    <!-- Einmal programmierbar: beim MPC5777C der
+                                                         UTEST-Block. Was hier steht, entscheidet
+                                                         über Startart, Takt und Debug-Zugang — und
+                                                         zwar endgültig. -->
+                                                    <Border x:Name="OtpBadge" Style="{StaticResource Badge}"
+                                                            Visibility="Collapsed"
+                                                            HorizontalAlignment="Left" Margin="0,5,8,0"
+                                                            Background="{StaticResource OtpFillBrush}"
+                                                            BorderBrush="{StaticResource OtpBrush}"
+                                                            ToolTip="Einmal programmierbar: gesetzte Bits lassen sich nicht mehr löschen oder überschreiben. Hier liegen die Konfigurations-Fuses für Startart und Takt (DCF-Records), die Sperren für JTAG und Nexus, Boot-Schlüssel, Hardware-Kennungen und Herstellungsdaten.">
+                                                        <TextBlock Style="{StaticResource MonoSmall}"
+                                                                   Text="OTP"
+                                                                   Foreground="{StaticResource OtpBrush}"/>
+                                                    </Border>
+                                                </StackPanel>
 
                                                 <StackPanel Grid.Column="1">
                                                     <TextBlock Style="{StaticResource MonoSmall}"
@@ -441,7 +700,8 @@
                                                     <TextBlock Style="{StaticResource MonoSmall}"
                                                                Margin="0,3,0,0" TextWrapping="Wrap"
                                                                Text="{Binding Description}"/>
-                                                    <TextBlock Style="{StaticResource BodyMuted}" FontSize="11"
+                                                    <TextBlock x:Name="PartitionDetail"
+                                                               Style="{StaticResource BodyMuted}" FontSize="11"
                                                                Margin="0,3,0,0" TextWrapping="Wrap"
                                                                Text="{Binding Detail}"/>
                                                 </StackPanel>
@@ -451,6 +711,17 @@
                                                            Text="{Binding StateText}"/>
                                             </Grid>
                                         </Border>
+
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding Otp}" Value="True">
+                                                <Setter TargetName="OtpBadge" Property="Visibility"
+                                                        Value="Visible"/>
+                                                <Setter TargetName="PartitionLabel" Property="Foreground"
+                                                        Value="{StaticResource OtpBrush}"/>
+                                                <Setter TargetName="PartitionDetail" Property="Foreground"
+                                                        Value="{StaticResource OtpBrush}"/>
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>

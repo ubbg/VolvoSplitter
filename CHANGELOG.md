@@ -3,6 +3,106 @@
 Das Format folgt lose [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
+## Unveröffentlicht
+
+### Zwei Abbilder gleichzeitig, ein Block 1:1 übernommen
+
+Wer einen Block aus einem anderen Abbild brauchte, musste ihn erst als Datei herausschreiben und
+über „Ersetzen…“ wieder einlesen — zwei Vorgänge, ein Umweg über die Platte, und das Werkzeug
+wusste nie, woher die Bytes kamen. Jetzt lässt sich ein zweites Abbild als **Quelle** öffnen
+(Knopf, `Strg+Umschalt+O`, zwei Dateien auf einmal ins Fenster ziehen oder als zweites
+Kommandozeilenargument). Es erscheint als schmale Leiste links, wird ausschließlich gelesen und
+hat je Block einen Knopf `→ ins Ziel`.
+
+**Die Kopie geht ausschließlich an dieselbe CPU-Adresse**, und das ist der Kern der Sache. Ein
+Bosch-Blockkopf trägt `blockEnd`, `nextSector`, zwei Tabellenzeiger und je Prüfsummenstruktur
+zwei Bereichsgrenzen — alles absolute CPU-Adressen. `blockEnd == blockStart + size − 4` wird ohne
+Toleranz geprüft; an eine andere Adresse kopiert wäre der Block kein Block mehr, sondern
+verschwände aus Abtastung und Kettenlauf. Bei gleicher Adresse bleibt jedes dieser Felder gültig
+— es muss kein einziges Byte umgeschrieben werden, und genau deshalb ist der Vorgang zulässig,
+ohne dass das Werkzeug anfängt, Prüfsummen zu stellen.
+
+Das Gegenstück im Ziel wird deshalb **gesucht, nicht gewählt**: gleiche normalisierte CPU-Adresse
+(das TriCore-Spiegelbit zählt nicht mit), gleiche Blockart. Bei Bosch entscheidet die Kennung aus
+dem Kopf und nicht `SectorKind` — 0x60 und 0x70 fallen beide auf „Dataset“ und sind trotzdem
+verschieden. Jede Ablehnung trägt eine benannte Regel und einen ausgeschriebenen Grund; sie steht
+dauerhaft auf der Karte, und der Knopf erscheint gar nicht erst. Abgelehnt wird, **bevor**
+gedrückt wird.
+
+Abgelehnt wird unter anderem ein Zielblock, der einmal programmierbar ist — im Steuergerät ließe
+er sich nicht noch einmal beschreiben, ein Abbild mit anderem Inhalt dort wäre auf dem echten
+Gerät nicht herstellbar. Aufhebbar, aber nur ausdrücklich, und der Befund verschwindet dabei
+nicht, er wird zur Warnung. Ebenso abgelehnt: ein Block, der über die Grenze des physischen
+Blocks oder in nicht gelöschten Platz hineinwüchse (`AvailableSpace` taugt hier nicht, es kennt
+keine Bankgrenzen — und ein bankübergreifender Block wäre keiner mehr). **Verschiedene
+Datei-Offsets bei gleicher CPU-Adresse sind dagegen kein Fehler**, sondern der Normalfall bei
+Teilauslesungen; das wird als Feststellung ausgewiesen, nicht als Warnung.
+
+Was der Vorgang nicht tut — jedes einzeln durch einen Test festgenagelt, allen voran einen
+Ausdehnungstest, der die Menge der geänderten Offsets Byte für Byte gegen den Zielblock hält:
+keine Adressfelder umschreiben, keine Prüfsumme stellen, keine CVN korrigieren, keine
+Prüfwertkopie mitziehen, keine Blockkette ausbessern. Alles davon steht ausgeschrieben in der
+Rückfrage vor dem Überschreiben; die Voreinstellung ist **Nein**.
+
+Auch bei den Volvo-Geräten wird **keine Prüfsumme gestellt** — anders als bei „Ersetzen…“, wo
+eine fremde Datei mit womöglich anderer Adresse hereinkommt. Beim 1:1-Übertrag ist die Prüfsumme
+der Quelle für genau diese Bytes bereits die richtige; sie still neu zu stellen hieße, eine
+Abweichung der Quelle beim Kopieren verschwinden zu lassen.
+
+Danach wird das Zielabbild neu ausgewertet und **gemeldet, was sich geändert hat**: ob der Block
+am Zielort weiterhin als Block gelesen wird, wie sein Prüfsummenstand jetzt lautet, welche
+Prüfsummen anderer Blöcke seitdem nicht mehr aufgehen — gemessen an zwei Momentaufnahmen, nicht
+aus der Absicht gefolgert — und ob die CVN eine andere ist.
+
+### Die Nur-Lesen-Festlegung wurde präzisiert, nicht zurückgenommen
+
+`EcuProfile.SupportsWriteBack` bleibt für TriCore false, und `RepairCrc`, `PatchUInt32Be` und
+`ReplaceSector` verweigern weiterhin. Daneben steht jetzt `SupportsBlockTransfer` — ein eigenes
+Feld, weil es ein anderer Vorgang ist: dort werden Werte gerechnet und gestellt, hier werden
+vorhandene Bytes übernommen. Bei `unknown` ist auch das false; ohne erkannte Blockstruktur gibt es
+keinen Block, sondern nur Bytes an einem Offset.
+
+`Save` hängt seitdem an `SupportsSaving` (`SupportsWriteBack || SupportsBlockTransfer`) statt an
+`SupportsWriteBack` — ein Vorgang, dessen Ergebnis sich nicht sichern ließe, wäre folgenlos. Der
+Test `TriCoreProfile_DoesNotOfferWriteBack` sichert unverändert zu, dass für TriCore keine
+Prüfsumme gestellt wird; nur die Zusicherung „TriCore verändert überhaupt nichts“ ist gefallen.
+
+### Der Befund nach einer Änderung beschrieb den Stand von vorher
+
+`ReadBoschBlocks` übernahm die Blockkette aus der Erkennung und las sie nie neu. Solange nur
+gelesen wurde, war das eine Ersparnis; nach einer Änderung an der Arbeitskopie war es falsch — die
+gemeldeten Prüfsummen gehörten zu anderen Bytes. Das fiel erst mit dem Blockübertrag auf, dessen
+ganze Aussage darin besteht, was danach noch aufgeht. Die Kette wird jetzt neu gelesen, sobald
+`IsModified` gesetzt ist.
+
+### OTP-Bereiche setzen sich farblich ab
+
+Ein einmal programmierbarer Bereich sah aus wie jeder andere. Das ist die eine Stelle im Abbild,
+an der ein Fehlgriff nicht einen Schreibvorgang kostet, sondern den Baustein: gesetzte Bits lassen
+sich weder löschen noch überschreiben. Beim MPC5777C steht dort, was über Startart, Takt,
+Debug-Zugang (JTAG/Nexus), Boot-Schlüssel und Hardware-Kennung entscheidet — der UTEST-Block mit
+den DCF-Records (Referenzhandbuch-Addendum, UTEST-/DCF-Tabelle). Bei Bosch-Abbildern trägt jeder
+Block mit Bit `0x00800000` im Kennungswort dieselbe Aussage.
+
+Beides bekommt eine eigene Farbe, Amethyst — bewusst keine dritte Abstufung von Blau: Stahlblau
+und Bernstein sagen, ob die Prüfsumme aufgeht, und das ist eine andere Achse als die Frage, ob
+sich der Bereich überhaupt noch beschreiben lässt. Verwechselbar wäre hier das Gefährlichste.
+
+* **Adresskarte**: getönter Grund, Kontur und eine Spur an der linken Kante. Der Grund macht auch
+  einen leeren OTP-Bereich sichtbar — UTEST ist im Abbild oft vollständig `0xFF`, und genau dann
+  sagte die Karte über diese 16 KiB bisher gar nichts. Eine eigene Mindesthöhe, weil 16 KiB von
+  8,6 MiB maßstäblich ein Sechstel Pixel sind; wer am Dateiende liegt, wächst dabei nach oben
+  statt über die Endadresse.
+* **Sektor-/Blockliste**: Abzeichen „OTP“ neben dem Prüfsummenstand, dazu der Kartenrand in
+  derselben Farbe. Die Statusfarbe bleibt unangetastet.
+* **Physische Blöcke**: UTEST mit Abzeichen und gefärbter Bedeutungszeile, samt Erläuterung am
+  Zeiger — was an Fuses, Sperren und Schlüsseln dort liegt.
+
+Im Modell steht das Kennzeichen jetzt als Feld statt als Text: `FlashPartition.Otp` und
+`SectorInfo.Otp`. Vorher stand `" · OTP"` im Namen des Blocks, wo es sich nicht färben ließ.
+Bericht und Befehlszeile haben kein Farbmittel und schreiben es weiterhin aus — dafür gibt es
+`SectorInfo.LabelText`; ihre Ausgabe ist unverändert.
+
 ## v1.3.0
 
 > Die Zahlen der folgenden Abschnitte sind an **1516 echten VAG-EDC17-Abbildern** gemessen, nicht

@@ -81,7 +81,10 @@ public static class Mpc5777cLayout
 
         partitions.Add(new FlashPartition("UTEST", LargeFlashSize + LowMidSize, UtestSize,
             0x400000, FlashBlockType.Utest, 0,
-            "Test-, Security-, DCF- und Kunden-OTP-Daten"));
+            "Test-, Security-, DCF- und Kunden-OTP-Daten — einmal programmierbar")
+        {
+            Otp = true
+        });
 
         return new PhysicalLayout(partitions, complete: true, Source);
     }

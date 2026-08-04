@@ -52,6 +52,17 @@ public sealed class SectorInfo : INotifyPropertyChanged
     public bool Truncated { get; init; }
 
     /// <summary>
+    /// Der Block trägt das OTP-Kennzeichen: Bit <c>0x00800000</c> im
+    /// Kennungswort der Bosch-Blockkette. Einmal programmiert, nicht mehr
+    /// löschbar — beim Tuning-Schutz-Block ist das der Sinn der Sache.
+    ///
+    /// Stand bis v1.3.0 als „ · OTP" im <see cref="Label"/>. Als eigenes Feld
+    /// kann die Oberfläche es färben, statt es nur zu buchstabieren; für
+    /// Textausgaben schreibt <see cref="LabelText"/> es weiterhin aus.
+    /// </summary>
+    public bool Otp { get; init; }
+
+    /// <summary>
     /// Adresse laut Tabelle, wenn der Sektor woanders gefunden wurde.
     /// Null, solange er dort liegt, wo er hingehört.
     /// </summary>
@@ -86,6 +97,13 @@ public sealed class SectorInfo : INotifyPropertyChanged
     public bool Writable { get; init; } = true;
 
     public string OutputName => Prefix + PartNumber;
+
+    /// <summary>
+    /// Bezeichnung samt OTP-Vermerk — für Bericht und Befehlszeile, die kein
+    /// Farbmittel haben. Die Oberfläche nimmt <see cref="Label"/> und setzt das
+    /// Kennzeichen daneben.
+    /// </summary>
+    public string LabelText => Otp ? $"{Label} · OTP" : Label;
 
     /// <summary>Art des Datensatzes aus dem Dateinamen im Kopf (dst1 / dst2 / pbc).</summary>
     public string DataSetTag

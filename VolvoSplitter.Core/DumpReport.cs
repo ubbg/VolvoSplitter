@@ -137,7 +137,7 @@ public static class DumpReport
             if (!sector.Present)
             {
                 rows.Add(new ReportRow(
-                    [sector.Label, "", Hex.Addr(sector.Start), "", sector.MissingReason],
+                    [sector.LabelText, "", Hex.Addr(sector.Start), "", sector.MissingReason],
                     RowMood.Warning));
                 continue;
             }
@@ -154,7 +154,7 @@ public static class DumpReport
             };
 
             rows.Add(new ReportRow(
-                [sector.Label, sector.PartNumber, sector.AddressRange, sector.SizeText, crc],
+                [sector.LabelText, sector.PartNumber, sector.AddressRange, sector.SizeText, crc],
                 sector.Status switch
                 {
                     SectorStatus.Verified => RowMood.Good,
