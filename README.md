@@ -178,6 +178,7 @@ Optionen:
   -r, --report-format <f>  Befund als txt (Vorgabe), md oder html
       --list-profiles   Bekannte Profile auflisten
   -h, --help            Diese Hilfe
+      --                Alles Folgende ist ein Dateiname, keine Option
 
 Beispiele:
   volvosplit C:\Dumps\ecu_Micro.mpc
@@ -194,14 +195,33 @@ Beispiele:
 | `-r`, `--report-format <f>` | `txt` (Vorgabe), `md` oder `html`. Unbekanntes bricht ab, statt still auf Text zurückzufallen |
 | `--list-profiles` | Bekannte Profile auflisten |
 | `-h`, `--help`, `/?` | Hilfe ausgeben |
+| `--` | Alles Folgende ist ein Dateiname — für Abbilder, die wie eine Option heißen |
+
+**Ein Aufruffehler bricht ab**, statt eine Option unter den Tisch fallen zu lassen: eine Option
+ohne Wert (`-o` am Zeilenende), eine Option als Wert (`-o -f` legte einen Ordner namens `-f` an
+und ließ `--fixed` fallen) und eine unbekannte Option (`--fixd` galt als Dateiname) melden und
+enden mit Rückgabewert 1. Ein Abbild, das wirklich `-f` heißt, schreibt man `./-f` oder stellt
+`--` davor.
 
 **Ordner als Argument** werden **nicht rekursiv** nach `*.mpc`, `*.bin` und `*.ori` durchsucht —
-nur die oberste Ebene. Mehrfach genannte Dateien werden ohne Rücksicht auf Groß- und Kleinschreibung
-entdoppelt.
+nur die oberste Ebene. Mehrfach genannte Dateien werden einmal verarbeitet, und das wird gesagt.
+Ob zwei Pfade dieselbe Datei bezeichnen, entscheidet die **Vorgabe des Dateisystems**: Windows
+und macOS ohne, Linux mit Rücksicht auf Groß- und Kleinschreibung. Pauschal ohne Rücksicht zu
+vergleichen hieß unter Linux, von `A.bin` und `a.bin` eine nie zu lesen — ohne jede Meldung.
 
 **Zielordner:** ohne `--out` entsteht `<abbildname>_sektoren/` neben dem Abbild, mit `--out`
 stattdessen `<zielordner>/<abbildname>/`. In beiden Fällen landet dort zusätzlich der Befund als
 `bericht.txt`, `bericht.md` oder `bericht.html` — je nach `--report-format`.
+
+**Zwei gleichnamige Abbilder in einem Aufruf** teilen sich diesen Ordner **nicht**. Vorher taten
+sie es: `volvosplit a/Original.bin b/Original.bin --out o` schrieb die Sektoren beider
+Steuergeräte nebeneinander in `o/Original/`, und die eine `bericht.txt` beschrieb nur das zuletzt
+zerlegte — bei gleicher Teilenummer wurde byteweise überschrieben, lautlos. Das zweite Abbild
+bekommt jetzt einen eigenen Ordner, benannt nach seinem Elternordner (`o/b_Original/`), notfalls
+durchnummeriert; die Ausweichung wird gemeldet. Abgebrochen wird nicht — ein Stapellauf über
+hunderte Abbilder darf nicht am zweiten Fund sterben. Belegt heißt „in diesem Lauf vergeben“,
+nicht „liegt schon auf der Platte“: derselbe Aufruf zweimal ausgeführt beschreibt dieselben
+Ordner.
 
 **Berichtsformate.** Der Befund wird einmal aufgebaut und wahlweise als Text, Markdown oder HTML
 ausgegeben; der Inhalt ist in allen dreien derselbe. Markdown liefert echte Tabellen für Ticket
@@ -397,6 +417,23 @@ Werkzeug vermeidet.
 **Nennt eine Kennung einen Baustein, dessen Bankaufteilung dem Abbild widerspricht, gewinnt das
 Abbild.** Die Tabelle ist eine Nutzerangabe, die Bankgrenze eine Messung: nur eine richtige
 Bankgrenze lässt `blockEnd` und `0xDEADBEEF` zusammenpassen. Der Widerspruch wird gemeldet.
+
+**Und der Nullpunkt wird ebenso gemessen.** Ein Abbild beginnt nicht zwangsläufig an der
+PFLASH-Basis — eine Teilauslesung ab `0x80180000` ist im ausgewerteten Bestand der Normalfall,
+nicht die Ausnahme. Wo das Fenster anfängt, sagt der Blockkopf selbst:
+`blockStart = blockEnd − size + 4`, und damit ist der Nullpunkt `blockStart − fileStart`. Die so
+gemessenen Basen laufen als weitere Layout-Kandidaten durch dieselbe Zählung bestätigter Köpfe.
+Sie gewinnen nur mit **echtem** Vorsprung; bei Gleichstand bleibt es bei der Vorgabe, denn ein
+einzelner Kopf bestätigt die aus ihm selbst abgeleitete Basis zwangsläufig. Der Beleg nennt sie:
+
+```
+Nullpunkt 0x80180000 aus den Blockköpfen gemessen: dort bestätigen sich 2 Köpfe,
+ab dem Anfang von TC1796 nur 0 — das Abbild beginnt nicht an der PFLASH-Basis
+```
+
+Gemessen an 1516 VAG-Abbildern: 227 davon verloren vorher **sämtliche** Blöcke allein daran,
+dass Datei-Offset 0 fest auf `0x80000000` stand — genau so viele lesen ihr Layout heute aus
+einem gemessenen Nullpunkt, und kein vorher gelesenes Abbild ist darunter.
 
 Fehlt eine Rolle im Abbild, wird sie trotzdem aufgeführt — mit der Begründung, was an der
 Adresse tatsächlich steht, statt eines pauschalen „leer oder verschlüsselt“:
@@ -641,7 +678,13 @@ Erst wenn **alle** Regeln zutreffen, gilt ein Kopf als gültig. Die Reihenfolge 
 5. Der Block liegt ganz in *einer* physischen Bank — Bänke sind im CPU-Raum nicht zusammenhängend
 6. `numChecksumStructures` ist plausibel und passt in den Block
 7. Beide Zeigertabellen liegen im eigenen Block, sofern ihre Anzahl > 0 ist
-8. `swIdentifier` ist druckbares ASCII
+
+Der `swIdentifier` ist **keine** dieser Regeln. Er wird gelesen, nicht geprüft: ein Feld, das
+sich nicht als druckbares ASCII lesen lässt, ergibt eine leere Kennung — es verwirft den Kopf
+nicht. 25 von 1516 ausgewerteten VAG-Abbildern füllen es mit `0xAF` und verloren dadurch
+zusammen 123 Blöcke, 14 davon restlos alle, obwohl die vier scharfen Regeln bei jedem dieser
+Köpfe zutrafen. Ein Textfeld darf keine strukturelle Prüfung sein. Gelesen wird alles oder
+nichts: aus Binärrauschen den druckbaren Teil herauszuklauben erfände eine Teilenummer.
 
 ### Zwei Suchverfahren
 
@@ -649,6 +692,13 @@ Die Struktur wird **doppelt** gelesen: eine Abtastung über das ganze Abbild als
 und der Kettenlauf über `nextSector` als Gegenprobe. Stimmen beide Ergebnismengen überein, ist
 das ein eigener Beleg; weichen sie ab, wird die Differenz gemeldet — nicht stillschweigend
 vereinigt. Der Kettenlauf bricht nach höchstens 64 Schritten ab und erkennt Zyklen.
+
+**Was der Kettenleser dabei sieht, steht im Befund.** Verworfene Kopfkandidaten (höchstens fünf
+aufgezählt, der Rest gezählt), eine abgerissene oder zyklische Kette, ein fehlender Einstiegspunkt
+und die Übereinstimmung beider Verfahren erscheinen als Belege. „Kein Blockkopf gefunden“ und
+„zwei Kandidaten tragen `0xDEADBEEF`, aber ihr `blockEnd` passt nicht zur angenommenen Basis“
+sind zwei völlig verschiedene Aussagen — ohne diese Sätze sieht „0 Sektoren“ in beiden Fällen
+gleich aus.
 
 ### Nachgerechnete Invarianten
 

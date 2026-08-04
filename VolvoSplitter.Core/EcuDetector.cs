@@ -184,16 +184,17 @@ public static class EcuDetector
         var evidence = new List<string>();
         int score = 0;
 
-        // 1. Baustein bestimmen, soweit es geht: Protokolldatei vor Kennung.
+        // 1. Baustein und Nullpunkt bestimmen, soweit es geht: Protokolldatei
+        //    vor Kennung, und über beide hinweg die Gegenprobe am Abbild.
         var identity = BoschIdentity.Scan(data);
-        var (device, deviceEvidence, deviceScore, ambiguous, candidates) =
+        var (device, windowStart, deviceEvidence, deviceScore, ambiguous, candidates) =
             ChooseDevice(data, report, identity);
 
         score += deviceScore;
         evidence.AddRange(deviceEvidence);
 
         // 2. Blockkette lesen — der stärkste Beleg, den es hier gibt.
-        var layout = TriCoreLayout.For(device, data.LongLength);
+        var layout = TriCoreLayout.For(device, data.LongLength, windowStart);
         var chain = BoschBlockChain.Read(data, layout);
 
         if (chain.Blocks.Count > 0)
@@ -209,6 +210,14 @@ public static class EcuDetector
                 evidence.Add($"{verified} Block/Blöcke mit rechnerisch bestätigter Prüfsumme");
             }
         }
+
+        // Was der Kettenleser unterwegs gesehen hat, gehört in dieselbe Belegliste.
+        // Er rechnet die Sätze ohnehin — „Kein bestätigter Bosch-Blockkopf gefunden",
+        // „Blockkopfkandidat bei … nicht bestätigt", „Kette bricht ab" —, und sie
+        // wurden bis hierher weggeworfen. Ohne sie liest sich „0 Sektoren" als
+        // „hier ist nichts", während in Wahrheit „ich habe es nicht verstanden"
+        // gemeint ist; das sind zwei völlig verschiedene Aussagen.
+        evidence.AddRange(chain.Evidence);
 
         // 3. Variantenkennung aus dem Dataset-Block, feste Fundstelle.
         if (chain.Variant is { } variant)
@@ -252,7 +261,8 @@ public static class EcuDetector
             evidence.Add($"Größe entspricht {device.Name}-PFLASH plus angehängtem DFLASH");
         }
 
-        return new Candidate(EcuProfiles.ForTriCore(device, data.LongLength, FamilyNameFor(identity)),
+        return new Candidate(EcuProfiles.ForTriCore(device, data.LongLength, FamilyNameFor(identity),
+                                                    windowStart),
                              score, evidence)
         {
             Chain = chain,
@@ -275,15 +285,40 @@ public static class EcuDetector
     }
 
     /// <summary>
-    /// Wählt den Baustein. Zuerst die benannten Belege — Protokolldatei vor
-    /// Steuergerätetyp —, dann die Gegenprobe am Abbild.
+    /// Ein Layout-Kandidat: Baustein <em>und</em> Nullpunkt des Abbilds, samt
+    /// der Zahl Blockköpfe, die er bestätigt.
+    /// </summary>
+    /// <param name="WindowStart">
+    /// Null heißt „Anfang des Bausteins" — die Vorgabe. Sonst eine an den
+    /// Blockköpfen gemessene CPU-Adresse für Datei-Offset 0.
+    /// </param>
+    private sealed record LayoutCandidate(TriCoreDevice Device, long? WindowStart, int Count)
+    {
+        /// <summary>Für die Belegliste — ein gemessener Nullpunkt gehört sichtbar dazu.</summary>
+        public string Name =>
+            WindowStart is { } start ? $"{Device.Name} ab {Hex.Addr(start)}" : Device.Name;
+
+        public bool Measured => WindowStart is not null;
+    }
+
+    /// <summary>
+    /// Wählt Baustein und Nullpunkt. Zuerst die benannten Belege — Protokolldatei
+    /// vor Steuergerätetyp —, dann die Gegenprobe am Abbild.
     ///
     /// Die Gegenprobe hat das letzte Wort: die Steuergerätetabelle ist eine
     /// Nutzerangabe, die Bankgrenze im Abbild ist eine Messung. Bestätigt eine
     /// andere Aufteilung mehr Blockköpfe, wird der Widerspruch gemeldet und dem
     /// Abbild gefolgt. Bleibt es offen, wird nichts gewählt.
+    ///
+    /// <strong>Der Nullpunkt läuft im selben Verfahren mit.</strong> Er war bis
+    /// hierher als einziger von der Messung ausgenommen und stand fest auf der
+    /// PFLASH-Basis; jede Teilauslesung verlor dadurch sämtliche Blöcke, obwohl
+    /// ihre Köpfe die richtige Lage selbst nennen. Über die gemessenen
+    /// Kandidaten entscheidet dieselbe Zahl bestätigter Köpfe wie über die
+    /// Bankaufteilung — und nur ein <em>echter</em> Vorsprung: bei Gleichstand
+    /// bleibt es bei der Vorgabe (siehe <see cref="HeaderCounts"/>).
     /// </summary>
-    private static (TriCoreDevice Device, List<string> Evidence, int Score,
+    private static (TriCoreDevice Device, long? WindowStart, List<string> Evidence, int Score,
                     bool Ambiguous, IReadOnlyList<string> Candidates)
         ChooseDevice(byte[] data, EcuReport? report, BoschIdentity? identity)
     {
@@ -312,46 +347,80 @@ public static class EcuDetector
         }
 
         var counts = HeaderCounts(data, claimed);
-        var best = counts.MaxBy(c => c.Count);
+
+        // MaxBy behält bei Gleichstand den ersten — und die Vorgabekandidaten
+        // stehen vorn. Ein gemessener Nullpunkt muss die Vorgabe also schlagen,
+        // nicht bloß einholen.
+        var best = counts.MaxBy(c => c.Count)!;
 
         if (claimed is not null)
         {
-            int claimedCount = counts.First(c => c.Device.Name == claimed.Name).Count;
+            int claimedCount = counts.First(c => !c.Measured && c.Device.Name == claimed.Name).Count;
 
-            if (best.Count > claimedCount)
+            // Zwei gemessene Nullpunkte mit derselben Trefferzahl sind zwei
+            // widersprüchliche Aussagen über dasselbe Abbild. Dann gilt weiter,
+            // was die Kennung sagt — dieselbe Zurückhaltung wie unten.
+            bool measuredTie = best.Measured &&
+                               counts.Count(c => c.Measured && c.Count == best.Count) > 1;
+
+            if (best.Count > claimedCount && !measuredTie)
             {
-                evidence.Add($"Der Abbildinhalt widerspricht: {best.Device.Name} bestätigt " +
-                             $"{best.Count} Blockköpfe, {claimed.Name} nur {claimedCount} — " +
-                             "die Bankaufteilung folgt dem Abbild, nicht der Tabelle");
-                return (best.Device, evidence, score, false, []);
+                evidence.Add(best.Measured
+                    ? $"Nullpunkt {Hex.Addr(best.WindowStart!.Value)} aus den Blockköpfen " +
+                      $"gemessen: dort bestätigen sich {best.Count} Köpfe, ab dem Anfang von " +
+                      $"{claimed.Name} nur {claimedCount} — das Abbild beginnt nicht an der " +
+                      "PFLASH-Basis"
+                    : $"Der Abbildinhalt widerspricht: {best.Device.Name} bestätigt " +
+                      $"{best.Count} Blockköpfe, {claimed.Name} nur {claimedCount} — " +
+                      "die Bankaufteilung folgt dem Abbild, nicht der Tabelle");
+                return (best.Device, best.WindowStart, evidence, score, false, []);
             }
 
-            return (claimed, evidence, score, false, []);
+            return (claimed, null, evidence, score, false, []);
         }
 
         // Ohne benannten Beleg entscheidet allein die Kette — und nur bei
         // klarem Vorsprung. Gleichstand heißt mehrdeutig, nicht „der erste".
-        var mapped = counts.OrderByDescending(c => c.Count).ToList();
+        //
+        // Vorgaben und gemessene Nullpunkte werden dabei getrennt gewertet: der
+        // gemessene ist die schwächere Quelle und muss jede Vorgabe echt
+        // schlagen. Zusammen in einer Rangliste hätte ein gemessener Nullpunkt,
+        // der eine Vorgabe nur einholt, aus einem klaren Vorsprung einen
+        // Gleichstand gemacht — und damit ein Abbild verloren, das vorher
+        // gelesen wurde.
+        var defaults = counts.Where(c => !c.Measured).OrderByDescending(c => c.Count).ToList();
+        var measured = counts.Where(c => c.Measured).OrderByDescending(c => c.Count).ToList();
 
-        if (mapped.Count >= 2 && mapped[0].Count > 0 && mapped[0].Count > mapped[1].Count)
+        if (measured.Count > 0 && measured[0].Count > defaults[0].Count &&
+            (measured.Count == 1 || measured[0].Count > measured[1].Count))
         {
-            evidence.Add($"{mapped[0].Device.Name} bestätigt {mapped[0].Count} Blockköpfe, " +
-                         $"{mapped[1].Device.Name} nur {mapped[1].Count} — die Bankaufteilung " +
+            evidence.Add($"Nullpunkt {Hex.Addr(measured[0].WindowStart!.Value)} aus den " +
+                         $"Blockköpfen gemessen: dort bestätigen sich {measured[0].Count} Köpfe, " +
+                         $"ab der PFLASH-Basis nur {defaults[0].Count} — das Abbild beginnt " +
+                         "nicht am Anfang des Bausteins");
+            return (measured[0].Device, measured[0].WindowStart, evidence, 0, false, []);
+        }
+
+        if (defaults.Count >= 2 && defaults[0].Count > 0 && defaults[0].Count > defaults[1].Count)
+        {
+            evidence.Add($"{defaults[0].Name} bestätigt {defaults[0].Count} Blockköpfe, " +
+                         $"{defaults[1].Name} nur {defaults[1].Count} — die Bankaufteilung " +
                          "entscheidet der Abbildinhalt");
-            return (mapped[0].Device, evidence, 0, false, []);
+            return (defaults[0].Device, defaults[0].WindowStart, evidence, 0, false, []);
         }
 
         var open = TriCoreDevice.Mapped.Select(d => d.Name).ToList();
         evidence.Add($"Baustein nicht bestimmt — {string.Join(" oder ", open)} kommen in Frage; " +
                      "die Löschsektorkarte bleibt deshalb offen");
 
-        return (TriCoreDevice.Generic(data.LongLength), evidence, 0, true, open);
+        return (TriCoreDevice.Generic(data.LongLength), null, evidence, 0, true, open);
     }
 
     /// <summary>
-    /// Zählt je Baustein, wie viele Blockköpfe seine Bankaufteilung bestätigt.
-    /// Nur eine richtige Bankgrenze lässt <c>blockEnd</c> und
-    /// <c>0xDEADBEEF</c> zusammenpassen — das ist eine Messung, kein Raten.
+    /// Zählt je Kandidat, wie viele Blockköpfe seine Abbildung bestätigt. Nur
+    /// eine richtige Bankgrenze <em>und</em> ein richtiger Nullpunkt lassen
+    /// <c>blockEnd</c> und <c>0xDEADBEEF</c> zusammenpassen — das ist eine
+    /// Messung, kein Raten.
     ///
     /// Mitgezählt wird auch <see cref="TriCoreDevice.LinearProgramFlash"/>, die
     /// Aufteilung ohne Banksprung. Ohne sie bliebe ein Abbild mit durchgehendem
@@ -359,9 +428,16 @@ public static class EcuDetector
     /// bei jedem Zweibank-Baustein durch die <c>blockEnd</c>-Regel und fehlen
     /// dann schlicht — gemeldet würde nichts, denn ein nicht gefundener Block
     /// sieht aus wie ein nicht vorhandener.
+    ///
+    /// <strong>Die Reihenfolge ist Teil der Aussage:</strong> erst die Vorgaben,
+    /// dann die gemessenen Nullpunkte. Sowohl <c>MaxBy</c> als auch
+    /// <c>OrderByDescending</c> behalten bei Gleichstand den früheren Eintrag —
+    /// eine gemessene Basis kommt also nur zum Zug, wenn sie echt mehr Köpfe
+    /// bestätigt. Das ist die Sperre gegen den Zufallstreffer: ein einzelner
+    /// Kopf bestätigt den aus ihm selbst abgeleiteten Nullpunkt zwangsläufig,
+    /// und genau deshalb reicht Gleichstand nicht.
     /// </summary>
-    private static List<(TriCoreDevice Device, int Count)> HeaderCounts(byte[] data,
-                                                                       TriCoreDevice? extra)
+    private static List<LayoutCandidate> HeaderCounts(byte[] data, TriCoreDevice? extra)
     {
         var devices = new List<TriCoreDevice>(TriCoreDevice.Mapped)
         {
@@ -369,12 +445,30 @@ public static class EcuDetector
         };
         if (extra is not null && devices.All(d => d.Name != extra.Name)) devices.Add(extra);
 
-        return devices
-            .Select(device => (device,
-                               BoschBlockChain.ScanHeaders(
-                                   data, TriCoreLayout.For(device, data.LongLength)).Count))
+        var candidates = devices
+            .Select(device => new LayoutCandidate(device, null, HeaderCount(data, device, null)))
             .ToList();
+
+        // Die am Abbild gemessenen Nullpunkte. Sie hängen an
+        // LinearProgramFlash, weil ein Blockkopf nur sagt, wo das Fenster
+        // anfängt, und nichts über Bänke dahinter — und diese Aufteilung ist die
+        // einzige, die ihrerseits nichts darüber behauptet.
+        foreach (long start in BoschBlockChain.MeasureWindowStarts(data))
+        {
+            // Die PFLASH-Basis ist bereits als Vorgabe dabei.
+            if (start == TriCoreDevice.PflashBase) continue;
+
+            candidates.Add(new LayoutCandidate(
+                TriCoreDevice.LinearProgramFlash, start,
+                HeaderCount(data, TriCoreDevice.LinearProgramFlash, start)));
+        }
+
+        return candidates;
     }
+
+    private static int HeaderCount(byte[] data, TriCoreDevice device, long? windowStart) =>
+        BoschBlockChain.ScanHeaders(data, TriCoreLayout.For(device, data.LongLength, windowStart))
+                       .Count;
 
     /// <summary>
     /// Anteil der 4-Byte-ausgerichteten little-endian-Wörter, die wie eine
