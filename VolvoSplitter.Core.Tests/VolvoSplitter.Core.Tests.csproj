@@ -20,6 +20,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\VolvoSplitter.Core\VolvoSplitter.Core.csproj" />
+    <!-- Die Kommandozeile trifft eigene Entscheidungen — fehlender Optionswert,
+         doppelt genannte Datei, belegter Zielordner. Sie stehen konsolenfrei in
+         VolvoSplitter.Cli/CommandLine.cs und werden hier mitgeprüft. -->
+    <ProjectReference Include="..\VolvoSplitter.Cli\VolvoSplitter.Cli.csproj" />
   </ItemGroup>
 
 </Project>

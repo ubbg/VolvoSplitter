@@ -91,6 +91,51 @@ unberührt. Der Bericht war bislang ungetestet; er hat jetzt zwanzig Tests, daru
 dass alle drei Formate dieselben Angaben tragen, und dass Markup in einem Dateinamen als Text
 auf der HTML-Seite landet statt als Tag.
 
+### Die Kommandozeile ersetzt kein Ergebnis mehr durch ein anderes
+
+Zwei gleichnamige Abbilder in **einem** Aufruf teilten sich stillschweigend einen Ausgabeordner.
+`volvosplit a/gleich.bin b/gleich.bin --out out` meldete „2/2 Abbilder verarbeitet“ mit
+Rückgabewert 0 und legte die Sektoren beider Steuergeräte nebeneinander in `out/gleich/` — dazu
+**eine** `bericht.txt`, die nur das zuletzt zerlegte beschrieb. Wer sie las, sah zwei Blöcke und
+fand neun Dateien. Bei gleicher Teilenummer wurde byteweise überschrieben, ohne jede Meldung. Im
+gelieferten Bestand löst das niemand aus (kein doppelter Basisname unter 1516); erreichbar ist es,
+sobald zwei Auslesungen `Original.bin` heißen, und das ist der Regelfall, nicht die Ausnahme.
+
+Das zweite Abbild bekommt jetzt einen eigenen Ordner, benannt nach seinem **Elternordner**
+(`out/b_gleich/`), notfalls durchnummeriert, und die Ausweichung wird gemeldet. Eine laufende
+Nummer sagte nur „das zweite“, der Elternordner sagt „welches“ — für eine Ablage, die als Beleg
+dienen soll, ist das der Unterschied zwischen einer Kennung und einem Namen. Abgebrochen wird
+nicht: ein Stapellauf über hunderte Abbilder darf nicht am zweiten Fund sterben. Belegt heißt
+dabei „in diesem Lauf vergeben“ und nicht „liegt schon auf der Platte“, sonst wüchse bei jedem
+Durchgang ein weiterer Satz Ordner heran.
+
+### Ein fehlender Optionswert ist ein Vertipper, keine Vorgabe
+
+Die Argumentzerlegung prüfte nur, *ob* nach einer Option noch ein Argument kommt, und übersprang
+sie sonst wortlos. Gemessen: `volvosplit probe.bin -o` legte `probe_sektoren/` neben dem Abbild an
+statt im angegebenen Ordner, `--out o13 -p` ließ genau die Erkennung laufen, die übersteuert
+werden sollte, und `-o -f` legte einen Ordner namens `-f` an und ließ `--fixed` fallen — alle drei
+mit Rückgabewert 0. Bei **falsch geschriebenen** Werten hielt sich dasselbe Programm längst an die
+richtige Regel (`-p tc1798` → 1, `-r pdf` → 1); sie gilt jetzt auch für den fehlenden.
+
+Ebenso ist eine **unbekannte** Option ein Aufruffehler statt eines Dateinamens: `--fixd` erzeugte
+„Nicht gefunden: --fixd“ auf der Fehlerausgabe, Rückgabewert 0 — und der Lauf lief ohne die Option
+weiter, die der Nutzer gesetzt zu haben glaubte. Neu ist `--` als Trenner; danach ist alles ein
+Dateiname. Ohne ihn wäre die Prüfung eine Sackgasse für Abbilder, die wie eine Option heißen.
+
+### Entdoppelt wird, wie das Dateisystem es sieht
+
+Die Dateisammlung faltete Pfade ohne Rücksicht auf Groß- und Kleinschreibung zusammen. Unter
+Windows ist das richtig, unter **Linux** ist es Datenverlust: ein Ordner mit `A.bin` und `a.bin`
+meldete „1/1 Abbilder verarbeitet“, und eine der beiden Dateien wurde nie gelesen. Verglichen wird
+jetzt nach der Vorgabe des jeweiligen Systems, entdoppelt über den vollen Pfad statt über die
+Schreibweise (`probe.bin` und `./probe.bin` sind ein Abbild), und **jede verworfene Nennung wird
+gemeldet**.
+
+Argumentzerlegung, Dateisammlung und Zielordnerwahl stehen dafür konsolenfrei in
+`VolvoSplitter.Cli/CommandLine.cs`; der Programmrumpf hält Ein- und Ausgabe. Die Kommandozeile war
+bislang ungetestet und hat jetzt 23 Tests.
+
 ---
 
 ## v1.2.0

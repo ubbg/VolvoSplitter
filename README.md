@@ -178,6 +178,7 @@ Optionen:
   -r, --report-format <f>  Befund als txt (Vorgabe), md oder html
       --list-profiles   Bekannte Profile auflisten
   -h, --help            Diese Hilfe
+      --                Alles Folgende ist ein Dateiname, keine Option
 
 Beispiele:
   volvosplit C:\Dumps\ecu_Micro.mpc
@@ -194,14 +195,33 @@ Beispiele:
 | `-r`, `--report-format <f>` | `txt` (Vorgabe), `md` oder `html`. Unbekanntes bricht ab, statt still auf Text zurückzufallen |
 | `--list-profiles` | Bekannte Profile auflisten |
 | `-h`, `--help`, `/?` | Hilfe ausgeben |
+| `--` | Alles Folgende ist ein Dateiname — für Abbilder, die wie eine Option heißen |
+
+**Ein Aufruffehler bricht ab**, statt eine Option unter den Tisch fallen zu lassen: eine Option
+ohne Wert (`-o` am Zeilenende), eine Option als Wert (`-o -f` legte einen Ordner namens `-f` an
+und ließ `--fixed` fallen) und eine unbekannte Option (`--fixd` galt als Dateiname) melden und
+enden mit Rückgabewert 1. Ein Abbild, das wirklich `-f` heißt, schreibt man `./-f` oder stellt
+`--` davor.
 
 **Ordner als Argument** werden **nicht rekursiv** nach `*.mpc`, `*.bin` und `*.ori` durchsucht —
-nur die oberste Ebene. Mehrfach genannte Dateien werden ohne Rücksicht auf Groß- und Kleinschreibung
-entdoppelt.
+nur die oberste Ebene. Mehrfach genannte Dateien werden einmal verarbeitet, und das wird gesagt.
+Ob zwei Pfade dieselbe Datei bezeichnen, entscheidet die **Vorgabe des Dateisystems**: Windows
+und macOS ohne, Linux mit Rücksicht auf Groß- und Kleinschreibung. Pauschal ohne Rücksicht zu
+vergleichen hieß unter Linux, von `A.bin` und `a.bin` eine nie zu lesen — ohne jede Meldung.
 
 **Zielordner:** ohne `--out` entsteht `<abbildname>_sektoren/` neben dem Abbild, mit `--out`
 stattdessen `<zielordner>/<abbildname>/`. In beiden Fällen landet dort zusätzlich der Befund als
 `bericht.txt`, `bericht.md` oder `bericht.html` — je nach `--report-format`.
+
+**Zwei gleichnamige Abbilder in einem Aufruf** teilen sich diesen Ordner **nicht**. Vorher taten
+sie es: `volvosplit a/Original.bin b/Original.bin --out o` schrieb die Sektoren beider
+Steuergeräte nebeneinander in `o/Original/`, und die eine `bericht.txt` beschrieb nur das zuletzt
+zerlegte — bei gleicher Teilenummer wurde byteweise überschrieben, lautlos. Das zweite Abbild
+bekommt jetzt einen eigenen Ordner, benannt nach seinem Elternordner (`o/b_Original/`), notfalls
+durchnummeriert; die Ausweichung wird gemeldet. Abgebrochen wird nicht — ein Stapellauf über
+hunderte Abbilder darf nicht am zweiten Fund sterben. Belegt heißt „in diesem Lauf vergeben“,
+nicht „liegt schon auf der Platte“: derselbe Aufruf zweimal ausgeführt beschreibt dieselben
+Ordner.
 
 **Berichtsformate.** Der Befund wird einmal aufgebaut und wahlweise als Text, Markdown oder HTML
 ausgegeben; der Inhalt ist in allen dreien derselbe. Markdown liefert echte Tabellen für Ticket
