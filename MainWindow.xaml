@@ -271,6 +271,21 @@
                                                     Value="{StaticResource WarnBrush}"/>
                                         </DataTrigger>
 
+                                        <!-- Nie gestellt: weder bestätigt noch abweichend. Ohne
+                                             eigenen Zweig fiele dieser Zustand in die Vorgabe der
+                                             Karte — und die lautet „Prüfsumme stimmt“, also genau
+                                             die Behauptung, die hier nicht zutrifft. Kein
+                                             „Prüfsumme korrigieren“: es gibt nichts zu korrigieren,
+                                             und Stellen ist nicht Aufgabe dieses Werkzeugs. -->
+                                        <DataTrigger Binding="{Binding Status}" Value="ChecksumNotStamped">
+                                            <Setter TargetName="StatusBadge" Property="Background" Value="Transparent"/>
+                                            <Setter TargetName="StatusBadge" Property="BorderBrush"
+                                                    Value="{StaticResource LineBrush}"/>
+                                            <Setter TargetName="StatusText" Property="Text" Value="nicht gestellt"/>
+                                            <Setter TargetName="StatusText" Property="Foreground"
+                                                    Value="{StaticResource MutedBrush}"/>
+                                        </DataTrigger>
+
                                         <!-- Kein Sektor an dieser Adresse -->
                                         <DataTrigger Binding="{Binding Status}" Value="Missing">
                                             <Setter TargetName="StatusBadge" Property="Background" Value="Transparent"/>

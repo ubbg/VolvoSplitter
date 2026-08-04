@@ -148,6 +148,13 @@ neue ausdrücklich auch nicht — es gibt drei:
   ungeprüft, nicht bestätigt.
 * `SectorStatus.ChecksumNotStamped` steht zwischen `Verified` und `CrcMismatch`; `CrcOk` bleibt
   für ihn falsch.
+* **Die Oberfläche sagt denselben dritten Satz.** Die Sektorkarte hat einen eigenen Zweig für
+  den neuen Zustand — ohne ihn fiele er in die Vorgabe der Karte, und die lautet „Prüfsumme
+  stimmt“: aus der Überbezichtigung wäre eine Falschbestätigung geworden, das schlechtere
+  Ergebnis von beiden. „Prüfsumme korrigieren“ bleibt dabei ausgeblendet, denn es gibt nichts
+  zu korrigieren. Vermerk und Zähler nach dem Herausschreiben gehen nicht mehr über die
+  Verneinung von `CrcOk`, sondern über den Zustand selbst — sonst meldete die Statuszeile „mit
+  abweichender Prüfsumme“ für einen Block, dessen Prüfsumme nie gestellt wurde.
 * Der Befund schreibt „nicht gestellt: Stellwort steht auf 0xAFAFAFAF, gerechnet 0xD519CB36“
   statt „weicht ab: gerechnet …, erwartet …“, führt das Stellwort als eigenes Kopffeld und
   färbt die Zeile nicht mehr als Warnung. Die Stapelausgabe bekommt eine dritte, ebenfalls
@@ -188,13 +195,12 @@ Abbilder mit mindestens einer Abweichung fällt von 48 auf 37.
   Zeigermodell benutzt oder VAG-EDC17-Stände sie schlicht anders ablegen, lässt sich ohne eine
   unabhängige Referenz-CVN — etwa aus einem OBD-Auslesegerät — nicht entscheiden. Ein Ratewert
   wäre schlechter als keiner; der offene Punkt aus v1.1.1 bleibt bestehen.
-* **Die Oberfläche kennt den dritten Prüfsummenzustand noch nicht überall.** Wo sie auf
-  `Status == CrcMismatch` prüft — Statuszeile und „alle korrigieren“ —, stimmt sie ohne
-  Änderung: die elf Blöcke fallen dort korrekt heraus. Zwei Stellen fragen dagegen `CrcOk` und
-  behandeln alles Übrige als Abweichung: der Vermerk nach dem Herausschreiben eines Sektors und
-  die Farbe im Abbildstreifen. Beides ist Anzeige, kein Befund — und die WPF-Anwendung zielt auf
-  `net10.0-windows` und lässt sich hier nicht bauen. Eine Änderung, die niemand übersetzen kann,
-  ist keine Verbesserung; der Punkt steht als solcher da.
+* **Die Farbe des Abbildstreifens bleibt zweiwertig.** `Controls/FlashMap.cs` malt
+  `CrcOk ? signal : warn`; ein nie gestellter Block bekommt damit den Warnton. Das ist die
+  ungefährliche Seite — der Signalton behauptete eine Bestätigung —, und es ist eine Farbe, kein
+  Satz. Die Karte daneben nennt den Zustand beim Namen. Die WPF-Anwendung zielt auf
+  `net10.0-windows` und lässt sich hier nicht bauen; für eine dritte Farbe ohne Übersetzer ist
+  das zu wenig Gewinn. Der Punkt steht als solcher da.
 
 ### Bericht als Text, Markdown oder HTML
 
