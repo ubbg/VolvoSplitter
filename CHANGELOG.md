@@ -5,6 +5,11 @@ die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 
 ## Unveröffentlicht
 
+> Die Zahlen der folgenden Abschnitte sind an **1516 echten VAG-EDC17-Abbildern** gemessen, nicht
+> geschätzt. Dieser Bestand ist privat und liegt dem Repository **nicht** bei; im Repository liegen
+> weiterhin keine Steuergeräte-Abbilder, weder Volvo noch VAG. Ausgangsstand der Messung: **243**
+> Abbilder ohne Blöcke, **7 826** Blöcke.
+
 ### Der Nullpunkt eines Abbilds wird gemessen, nicht gesetzt
 
 Datei-Offset 0 lag bedingungslos auf `0x80000000`. Damit hing jede Kopfprüfung an einer
@@ -33,7 +38,15 @@ Am Bestand: **243 → 2** Abbilder ohne Blöcke, **7 826 → 8 441** Blöcke, **
 vorher gelesenes Abbild verschlechtert. Alle 8 441 herausgelösten Sektordateien beginnen mit
 einer bekannten Blockart, tragen die Länge aus ihrem Größenfeld, enden auf `0xDEADBEEF` und
 sind byteweise im Quellabbild enthalten; 8 362 tragen eine nachgerechnete, aufgehende
-Prüfsumme (vorher 7 800).
+Prüfsumme (vorher 7 800). Am schärfsten zeigt es sich an den kleinen Dateien: **alle 136**
+Abbilder unter 1 MiB waren stumm, ausnahmslos, und alle 136 liefern jetzt Blöcke. 227 Abbilder
+lesen ihr Layout aus einem gemessenen Nullpunkt, verteilt auf neun verschiedene Basen — die
+häufigste ist `0x80180000` (110 Abbilder).
+
+Die gemeldeten **Prüfsummenabweichungen steigen dabei von 26 auf 79**, und das ist kein
+Rückschritt: kein vorher bestätigter Block ist darunter. Alle 53 hängen an neu gefundenen
+Blöcken, 43 davon sind Tuning-protection- und Emulation-extension-Blöcke — genau die Blockarten,
+deren Abweichung das Werkzeug zeigen soll.
 
 Nebenwirkung mitbehoben: der Bericht wies für eine Teilauslesung `0x000000–0x080000 →
 0x80000000–0x80080000` aus — eine Aussage, der der Blockkopf im selben Abbild widersprach.
@@ -60,9 +73,70 @@ nicht bestätigt“ oder „Kette bricht ab“ — obwohl der Quelltext über di
 selbst schreibt „Wird gemeldet, aber nicht als Block ausgegeben“.
 
 Sie steht jetzt in den Erkennungsbelegen und damit in Bericht und Stapelausgabe. Der Deckel von
-fünf aufgezählten Kandidaten bleibt: der Befund eines normal gelesenen Abbilds wächst dadurch
-im Mittel um zwei Zeilen. Genau diese Sätze hätten den Nullpunktfehler oben sofort sichtbar
-gemacht.
+fünf aufgezählten Kandidaten bleibt: der Befund eines normal gelesenen Abbilds wächst dadurch im
+Mittel um 2,8 Zeilen. Genau diese Sätze hätten den Nullpunktfehler oben sofort sichtbar gemacht.
+
+Am Bestand: jedes der 1516 Abbilder trägt jetzt mindestens einen Beleg des Kettenlesers, 366
+nennen ausdrücklich **verworfene** Kopfkandidaten (28 davon mit der Zusammenfassung „… und N
+weitere“). „Kette läuft im Kreis“ bleibt bei null — das ist kein Fehlen, sondern ein Befund:
+keine Kette im Bestand hat einen Zyklus.
+
+### „gesichert“ trägt nur noch, was nachgerechnet ist
+
+Die Bereichseinordnung vergab ihre höchste Beleglage — laut eigener Definition „durch Kopf,
+Prüfsumme oder eindeutigen Inhalt belegt“ — an drei Aussagen, die an den Bytes falsch waren.
+Gemessen an den 975 Bereichen, die der Bestand meldet: **15 Zeilen falsch, alle 15
+nachgerechnet.** (Gezählt wird hier auf dem Stand *nach* der Nullpunkt-Berichtigung oben, denn
+die entscheidet mit, wieviele kopflose Bereiche es überhaupt gibt.)
+
+* **Drei Bytes belegen keinen Klartext.** Neben `src/` und `@(#)` wurde auch `../` gesucht, und
+  ein Fund hebelte gleich dreifach aus: die Opak-Erkennung, die Bedingung aus Wiederholungsanteil
+  und Entropie, und die Beleglage. Im ganzen Bestand kommen `src/` und `@(#)` in **null**
+  Abbildern vor, `../` in 59 — ausgelöst hat die Heuristik also ausschließlich der Zufallstreffer,
+  fünfmal, und war fünfmal falsch, viermal davon in einem Bereich mit **Entropie 8,00**, also
+  mitten im Rauschen. Entscheidend ist jetzt nicht die Nadel, sondern dass sie *in einer
+  Zeichenkette* steht: der druckbare ASCII-Lauf um den Fund muss 16 Byte erreichen. Gerechnet ist
+  das (95/256)¹⁶, unter einem erwarteten Zufallstreffer je 4 MiB; gemessen ist der längste
+  druckbare Lauf, der im Bestand eine der drei Nadeln enthält, **8 Byte** lang (`VV=VV../`) — ein
+  echter Pfad wie `../src/appl/main.c` hat 18. Der gefundene Text steht jetzt im Befund, damit
+  der Beleg zu sehen ist statt behauptet zu werden. Und die Opak-Erkennung geht vor: „Entropie
+  8,00“ und „Programmcode im Klartext“ schließen einander aus. Verloren geht dabei kein echter
+  Codebereich — es gab keinen.
+* **Geringe Entropie ist keine Konstanz.** „Konstantes Füllbyte 0x??“ hing an `entropy < 0.5`,
+  und das heißt „stark ungleichverteilt“; genannt wurde `data[start]`, also schlicht das erste
+  Byte des Bereichs. Zehn der 879 so gemeldeten Bereiche waren nicht konstant, und in fünf davon
+  kam das genannte Byte im ganzen Bereich **genau einmal** vor, während 99,94 % auf `0x00`
+  standen. Geprüft wird die Konstanz jetzt an den Bytes, benannt wird das häufigste Byte mit
+  seinem Anteil, und „gesichert“ trägt nur der nachgerechnete Fall: aus „Konstantes Füllbyte
+  0x1D · gesichert“ wird „Überwiegend 0x00 (99,94 %), 5 abweichende Bytes · stark gestützt“.
+* **Der Kalibrierungskandidat ist gestrichen.** Er verlangte vier Merkmale zugleich und griff in
+  **0 von 1516** Abbildern — und er kann es auch nicht: der Anteil monotoner Fenster erreicht
+  höchstens 0,0292, und zwar in den Dataset-Blöcken, in denen die Kalibrierdaten wirklich liegen,
+  während die kopflosen Restbereiche schon 0,0220 erreichen. Die beiden Mengen überlappen, es gibt
+  also keine Schwelle, die sie trennt — auch keine am Bestand kalibrierte. Ein Zweig, der nur auf
+  synthetischen Rampen anspricht, steht im Bericht als Möglichkeit, die es nicht gibt.
+
+Am Bestand: 975 Bereiche, davon 960 Zeilen unverändert und 15 geändert; „gesichert“ 884 → 869.
+Von den verbliebenen 869 „Konstantes Füllbyte“ und den 10 neuen „Überwiegend 0x…“ ist keine
+einzige an den Bytes falsch — vorher waren es 10 von 879.
+
+### Was ausdrücklich nicht geändert wurde
+
+* **Zwei Abbilder bleiben ohne Blöcke** (von vorher 243). Beide sagen jetzt wenigstens, was sie
+  verworfen haben: 155 bzw. 1576 Kopfkandidaten, keiner bestätigt. An den Bytes nachgesehen ist
+  das die richtige Antwort. Im ersten kommt `0xDEADBEEF` im **ganzen Abbild kein einziges Mal**
+  vor; die beiden strukturell plausiblen Köpfe bei `0x180000` und `0x1A0000` tragen am
+  errechneten Blockende `0xFFFFFFFF`. Das zweite nennt sich `EDC17 XY01`, steht damit in keiner
+  Zeile der Steuergerätetabelle, und keiner seiner Kandidaten hält der `blockEnd`-Regel stand.
+* **Eine layoutfreie Rohsuche findet 79 Kopfkandidaten mehr**, als das Werkzeug meldet — 8 520
+  gegen 8 441, verteilt auf 22 Abbilder. 77 davon nennen eine Basis *unterhalb* von
+  `0x80000000`: das sind aneinandergehängte Mehrfach-Auslesungen, deren zweite und dritte Kopie
+  liegen bleibt. Das ist Untermeldung, keine Erfindung — und ein Mehrfenstermodell ist nicht Teil
+  dieses Werkzeugs, `FlashDump` hält genau ein Abbild. Der Punkt bleibt offen.
+* **Die CVN wird in keinem einzigen der 1516 Abbilder gefunden.** Ob `FindCvn` ein falsches
+  Zeigermodell benutzt oder VAG-EDC17-Stände sie schlicht anders ablegen, lässt sich ohne eine
+  unabhängige Referenz-CVN — etwa aus einem OBD-Auslesegerät — nicht entscheiden. Ein Ratewert
+  wäre schlechter als keiner; der offene Punkt aus v1.1.1 bleibt bestehen.
 
 ### Bericht als Text, Markdown oder HTML
 
