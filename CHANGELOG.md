@@ -8,7 +8,7 @@ die Versionsnummern [Semantic Versioning](https://semver.org/lang/de/).
 ### Der Nullpunkt eines Abbilds wird gemessen, nicht gesetzt
 
 Datei-Offset 0 lag bedingungslos auf `0x80000000`. Damit hing jede Kopfprüfung an einer
-Annahme, die nie geprüft wurde — und **225 von 1516** echten VAG-EDC17-Abbildern verloren
+Annahme, die nie geprüft wurde — und **227 von 1516** echten VAG-EDC17-Abbildern verloren
 dadurch *sämtliche* Blöcke, obwohl jeder ihrer Blockköpfe seine Lage selbst nennt
 (`blockStart = blockEnd − size + 4`). Betroffen war alles, was nicht an der PFLASH-Basis
 beginnt: Teilauslesungen ab `0x80180000`, reine PMU1-Abzüge ab `0x80800000`, herausgelöste

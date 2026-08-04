@@ -431,8 +431,9 @@ Nullpunkt 0x80180000 aus den Blockköpfen gemessen: dort bestätigen sich 2 Köp
 ab dem Anfang von TC1796 nur 0 — das Abbild beginnt nicht an der PFLASH-Basis
 ```
 
-Gemessen an 1516 VAG-Abbildern: 225 davon verloren vorher **sämtliche** Blöcke allein daran,
-dass Datei-Offset 0 fest auf `0x80000000` stand.
+Gemessen an 1516 VAG-Abbildern: 227 davon verloren vorher **sämtliche** Blöcke allein daran,
+dass Datei-Offset 0 fest auf `0x80000000` stand — genau so viele lesen ihr Layout heute aus
+einem gemessenen Nullpunkt, und kein vorher gelesenes Abbild ist darunter.
 
 Fehlt eine Rolle im Abbild, wird sie trotzdem aufgeführt — mit der Begründung, was an der
 Adresse tatsächlich steht, statt eines pauschalen „leer oder verschlüsselt“:

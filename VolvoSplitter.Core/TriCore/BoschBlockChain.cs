@@ -333,11 +333,23 @@ public static class BoschBlockChain
     ///
     /// Jeder Blockkopf nennt seine Lage selbst: <c>blockEnd</c> zeigt auf das
     /// letzte Wort, also ist <c>blockStart = blockEnd − size + 4</c> und der
-    /// Nullpunkt <c>blockStart − fileStart</c>. Gesucht wird deshalb mit genau
-    /// den Regeln von <see cref="TryReadHeader"/>, die <em>ohne</em> Layout
+    /// Nullpunkt <c>blockStart − fileStart</c>. Gesucht wird deshalb mit den
+    /// Regeln von <see cref="TryReadHeader"/>, die <em>ohne</em> Layout
     /// auskommen: bekannte Blockart, Größe passt in die Datei, <c>0xDEADBEEF</c>
     /// am errechneten Blockende, plausible Strukturzahl. Die Regeln, die eine
     /// Basis voraussetzen, bleiben draußen — sie ist ja das Gesuchte.
+    ///
+    /// Dazu kommt eine Bedingung, die <see cref="TryReadHeader"/> <em>nicht</em>
+    /// hat: das vierte Kopfbyte muss null sein. Sie prüft nichts, sie spart
+    /// Arbeit — diese Schleife läuft über jedes vierte Byte des ganzen Abbilds,
+    /// und ohne sie folgt auf jede getroffene Blockart eine Lese- und
+    /// Rechenrunde. Gedeckt ist sie: über alle 8 441 Blöcke, die das Werkzeug
+    /// aus 1 516 echten VAG-EDC17-Abbildern herauslöst, ist dieses Byte
+    /// ausnahmslos null — im Kopf steht dort das obere Byte der Kennung
+    /// (<c>identifier &amp; 0xFFFFFF00</c>), und die reicht nie so weit. Und
+    /// wirkungslos ist sie ebenfalls nachgemessen: ohne sie liefert diese
+    /// Funktion an allen 1 516 Abbildern dieselbe Liste. Fiele sie in einer
+    /// anderen Baureihe doch einmal ins Gewicht, ist ihr Wegfall gefahrlos.
     ///
     /// <strong>Das Ergebnis ist ein Vorschlag, kein Befund.</strong> Ein einzelner
     /// Kopf bestätigt den aus ihm selbst abgeleiteten Nullpunkt zwangsläufig;

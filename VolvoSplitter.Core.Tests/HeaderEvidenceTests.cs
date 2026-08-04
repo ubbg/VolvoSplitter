@@ -8,7 +8,7 @@ namespace VolvoSplitter.Core.Tests;
 /// dieselbe Form haben: das Werkzeug verwarf etwas, ohne es zu sagen.
 ///
 /// * Der <strong>Nullpunkt</strong> des Abbilds war gesetzt statt gemessen.
-///   225 Abbilder verloren dadurch sämtliche Blöcke, obwohl jeder ihrer
+///   227 Abbilder verloren dadurch sämtliche Blöcke, obwohl jeder ihrer
 ///   Blockköpfe seine Lage selbst nennt.
 /// * Ein <strong>Kennungsfeld</strong>, das nicht als Text lesbar war, verwarf
 ///   den ganzen Kopf — 25 Abbilder, 123 Blöcke.
